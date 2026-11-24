@@ -679,11 +679,14 @@ pub fn run(args: &[String]) -> Result<(), String> {
 
     let bin = std::fs::metadata(&exe).map(|m| m.len()).unwrap_or(0);
     let release = !cfg!(debug_assertions);
+    // a shared ci runner is a slice of a busy machine, so its wall-clock times say
+    // more about the neighbours than about hayate. memory and allocations still count
+    let timed = std::env::var_os("CI").is_none();
     let mbs = |b: u64| format!("{:.2} mb", b as f64 / MB as f64);
     let ms = |us: u64| format!("{:.2} ms", us as f64 / 1000.0);
     let mut rows = vec![
         Row { name: "binary size, release, stripped", limit: "4 mb".into(), got: mbs(bin), pass: release.then_some(bin <= 4 * MB as u64) },
-        Row { name: "cold start to first frame", limit: "40 ms".into(), got: ms(field("startup_us")), pass: Some(field("startup_us") <= 40_000) },
+        Row { name: "cold start to first frame", limit: "40 ms".into(), got: ms(field("startup_us")), pass: timed.then_some(field("startup_us") <= 40_000) },
         Row { name: "idle private bytes, no tabs", limit: "4 mb".into(), got: mbs(field("idle_private")), pass: release.then_some(field("idle_private") <= 4 * MB as u64) },
         Row {
             name: "  idle working set (os floor)",
@@ -694,9 +697,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
         Row { name: "one text tab (200 posts)", limit: "1 mb".into(), got: mbs(one_tab as u64), pass: Some(one_tab > 0 && one_tab <= MB) },
         Row { name: "four services, 10 tabs, images off", limit: "20 mb".into(), got: mbs(mem.peak_working_set as u64), pass: release.then_some(mem.peak_working_set <= 20 * MB) },
         Row { name: "same with image cache full", limit: "30 mb".into(), got: "n/a: images not built".into(), pass: None },
-        Row { name: "keypress to screen updated, p99", limit: "4 ms".into(), got: ms(pct(&mut key_us, 99) as u64), pass: Some(pct(&mut key_us, 99) <= 4000) },
-        Row { name: "full-screen redraw 200x60, p99", limit: "1 ms".into(), got: ms(pct(&mut redraw_us, 99) as u64), pass: Some(pct(&mut redraw_us, 99) <= 1000) },
-        Row { name: "scroll, p99 frame (120 fps)", limit: "8.33 ms".into(), got: ms(pct(&mut frame_us, 99) as u64), pass: Some(pct(&mut frame_us, 99) <= 8333) },
+        Row { name: "keypress to screen updated, p99", limit: "4 ms".into(), got: ms(pct(&mut key_us, 99) as u64), pass: timed.then_some(pct(&mut key_us, 99) <= 4000) },
+        Row { name: "full-screen redraw 200x60, p99", limit: "1 ms".into(), got: ms(pct(&mut redraw_us, 99) as u64), pass: timed.then_some(pct(&mut redraw_us, 99) <= 1000) },
+        Row { name: "scroll, p99 frame (120 fps)", limit: "8.33 ms".into(), got: ms(pct(&mut frame_us, 99) as u64), pass: timed.then_some(pct(&mut frame_us, 99) <= 8333) },
         Row {
             name: "cpu while idle",
             limit: "0%".into(),
@@ -704,7 +707,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             pass: Some(field("idle_cpu_us") < 2_000),
         },
         Row { name: "heap allocs, 1000 steady frames", limit: "0".into(), got: allocs.to_string(), pass: Some(allocs == 0) },
-        Row { name: "streamed token to screen, p99", limit: "1 ms".into(), got: ms(pct(&mut token_us, 99) as u64), pass: Some(!token_us.is_empty() && pct(&mut token_us, 99) <= 1000) },
+        Row { name: "streamed token to screen, p99", limit: "1 ms".into(), got: ms(pct(&mut token_us, 99) as u64), pass: Some(!token_us.is_empty() && (!timed || pct(&mut token_us, 99) <= 1000)) },
         Row {
             name: "json scanner extra memory per mb",
             limit: "64 kb".into(),
@@ -714,6 +717,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
     ];
     if !release {
         rows.push(Row { name: "(debug build: memory rows are not judged)", limit: String::new(), got: String::new(), pass: None });
+    }
+    if !timed {
+        rows.push(Row { name: "(ci runner: times are shown, not judged)", limit: String::new(), got: String::new(), pass: None });
     }
 
     println!();
