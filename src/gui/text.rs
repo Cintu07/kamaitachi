@@ -58,13 +58,9 @@ pub fn factory() -> IDWriteFactory2 {
 pub const TYPEWRITER: &str = "CMU Typewriter Text";
 pub const SERIF: &str = "CMU Serif";
 
-/// They ship inside the exe as woff2, 92 KB for all three. DirectWrite unpacks each
-/// one into memory once, which comes to a few hundred KB.
-const OWN_FONTS: [&[u8]; 3] = [
-    include_bytes!("../../assets/fonts/cmuntt.woff2"),
-    include_bytes!("../../assets/fonts/cmuntb.woff2"),
-    include_bytes!("../../assets/fonts/cmunti.woff2"),
-];
+/// Two faces, the regular typewriter and the upright serif. They ship inside the exe
+/// as woff2, 55 KB for both, and DirectWrite unpacks each into memory once.
+const OWN_FONTS: [&[u8]; 2] = [include_bytes!("../../assets/fonts/cmuntt.woff2"), include_bytes!("../../assets/fonts/cmunrm.woff2")];
 
 struct SendCollection(IDWriteFontCollection);
 unsafe impl Send for SendCollection {}

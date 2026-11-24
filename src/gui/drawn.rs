@@ -489,7 +489,7 @@ impl App {
         }
     }
 
-    /// The new tab: a sheet of paper with a sky blue wash, the name in serif italic,
+    /// The new tab: a sheet of paper with a sky blue wash, the name in serif,
     /// a line of what kamaitachi has done, and the stamp book along the bottom.
     pub(super) fn draw_sheet(&mut self) {
         let k = self.scale;
@@ -500,7 +500,7 @@ impl App {
         let title_y = TOP + hh * 0.26;
         let title = "kamaitachi";
         let tsize = (hh * 0.11).clamp(44.0, 84.0);
-        let title_w = self.measure(title, tsize, true, SERIF);
+        let title_w = self.measure(title, tsize, false, SERIF);
         let line = format!(
             "{:.1} MB in use  ·  {} ads and trackers cut  ·  day {}",
             private_mb() + self.full_mb,
@@ -593,7 +593,7 @@ impl App {
                 }
             }
         }
-        self.words(title, mid - title_w / 2.0, title_y, tsize, true, SERIF, s.ink, title_w + 8.0);
+        self.words(title, mid - title_w / 2.0, title_y, tsize, false, SERIF, s.ink, title_w + 8.0);
         self.words(sub, mid - sub_w / 2.0, uy + 16.0, 15.0, false, TYPEWRITER, s.muted, sub_w + 4.0);
         self.words(&line, mid - line_w / 2.0, uy + 44.0, 13.0, false, TYPEWRITER, s.text, line_w + 4.0);
         let note = "stamps  ·  click the weasel for the den";

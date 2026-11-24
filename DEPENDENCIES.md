@@ -19,4 +19,4 @@ async runtimes are not allowed, and neither are http client crates, json librari
 
 images go through wic, the decoder built into windows, so no image crates are needed.
 
-the chrome brings three fonts of its own, cmu typewriter regular and bold and cmu serif italic, as woff2 files inside the exe (92 kb together). directwrite unpacks them in memory, so no font crate is needed either.
+the chrome brings two fonts of its own, cmu typewriter and cmu serif, as woff2 files inside the exe (55 kb together). directwrite unpacks them in memory, so no font crate is needed either.
