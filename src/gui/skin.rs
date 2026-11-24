@@ -1,9 +1,9 @@
 //! Skins: the colors the chrome is drawn in. A skin is twenty-odd numbers, so having
 //! five of them costs nothing, and switching is just a different struct.
 //!
-//! joseon is the default. It is the soft ivory and sky blue of Korean skin care boxes
-//! (Beauty of Joseon is what we had in mind), fading toward white. night is the dark
-//! amber look kamaitachi had first. The other three are earned by blocking things.
+//! joseon is the default: warm paper, graphite, cobalt ink and a wash of sky blue,
+//! drawn by hand (see brush.rs). night is the dark amber look kamaitachi had first.
+//! The other three are earned by blocking things.
 
 use crate::web::Rgba;
 use std::cell::Cell;
@@ -14,6 +14,8 @@ pub struct Skin {
     /// what you have to do before it unlocks, as ads and trackers blocked
     pub unlock_at: u64,
     pub light: bool,
+    /// drawn in pencil and ink on paper, when the cpu renderer is on
+    pub drawn: bool,
     /// the tab strip, the toolbar under it, and the address field inside that
     pub strip: Rgba,
     pub panel: Rgba,
@@ -41,22 +43,26 @@ pub const JOSEON: Skin = Skin {
     name: "joseon",
     unlock_at: 0,
     light: true,
-    strip: [0xec, 0xe4, 0xd4, 255],
-    panel: [0xf8, 0xf4, 0xec, 255],
-    field: [0xff, 0xff, 0xff, 255],
-    hover: [0xe4, 0xda, 0xc6, 255],
-    key: [0xf2, 0xec, 0xe0, 255],
-    key_hover: [0xe6, 0xdd, 0xcb, 255],
-    text: [0x26, 0x32, 0x40, 255],
-    muted: [0x6e, 0x77, 0x83, 255],
-    faint: [0xa7, 0xab, 0xb0, 255],
-    accent: [0x56, 0xa3, 0xdb, 255],
-    ink: [0x1f, 0x5b, 0x8a, 255],
-    ink_dim: [0x86, 0xa2, 0xb8, 255],
-    full: [0x3f, 0x9a, 0xb8, 255],
+    drawn: true,
+    // a desk, a sheet of paper on it, and a fresher sheet for the address
+    strip: [0xe8, 0xe1, 0xd1, 255],
+    panel: [0xf6, 0xf2, 0xe7, 255],
+    field: [0xfb, 0xf8, 0xf1, 255],
+    hover: [0xe6, 0xde, 0xcb, 255],
+    key: [0xef, 0xe9, 0xdb, 255],
+    key_hover: [0xe6, 0xde, 0xcb, 255],
+    // warm black for words, graphite for the rest
+    text: [0x23, 0x21, 0x1d, 255],
+    muted: [0x66, 0x61, 0x58, 255],
+    faint: [0xa3, 0x9c, 0x8e, 255],
+    // the sky blue is for washes; the cobalt is the ink
+    accent: [0x9c, 0xc8, 0xea, 255],
+    ink: [0x2a, 0x3d, 0x91, 255],
+    ink_dim: [0x78, 0x82, 0xae, 255],
+    full: [0x3a, 0x8c, 0xc4, 255],
     bevel_hi: [255, 255, 255, 210],
     bevel_lo: [0x8b, 0x77, 0x55, 55],
-    led_off: [0xd6, 0xcd, 0xbd, 255],
+    led_off: [0xd9, 0xd1, 0xc0, 255],
     scan: 0,
 };
 
@@ -64,6 +70,7 @@ pub const NIGHT: Skin = Skin {
     name: "night",
     unlock_at: 0,
     light: false,
+    drawn: false,
     strip: [0x08, 0x08, 0x0b, 255],
     panel: [0x11, 0x11, 0x15, 255],
     field: [0x06, 0x06, 0x08, 255],
@@ -87,6 +94,7 @@ pub const WAVE: Skin = Skin {
     name: "wave",
     unlock_at: 100,
     light: false,
+    drawn: false,
     strip: [0x10, 0x1a, 0x33, 255],
     panel: [0x17, 0x24, 0x44, 255],
     field: [0x0b, 0x12, 0x26, 255],
@@ -110,6 +118,7 @@ pub const NEON: Skin = Skin {
     name: "neon",
     unlock_at: 1_000,
     light: false,
+    drawn: false,
     strip: [0x0c, 0x06, 0x14, 255],
     panel: [0x14, 0x0a, 0x22, 255],
     field: [0x08, 0x04, 0x0e, 255],
@@ -134,6 +143,7 @@ pub const GAMEBOY: Skin = Skin {
     name: "gameboy",
     unlock_at: 10_000,
     light: true,
+    drawn: false,
     strip: [0x8b, 0xac, 0x0f, 255],
     panel: [0x9b, 0xbc, 0x0f, 255],
     field: [0xa8, 0xc6, 0x30, 255],

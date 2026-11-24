@@ -18,3 +18,5 @@ hayate's own code is about 600 kb. the rest is the rust standard library (about 
 async runtimes are not allowed, and neither are http client crates, json libraries, tui toolkits or logging frameworks. a crate that would pull in a second copy of something already shipped is out too.
 
 images go through wic, the decoder built into windows, so no image crates are needed.
+
+the chrome brings three fonts of its own, cmu typewriter regular and bold and cmu serif italic, as woff2 files inside the exe (92 kb together). directwrite unpacks them in memory, so no font crate is needed either.

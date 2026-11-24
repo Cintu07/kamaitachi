@@ -4,6 +4,7 @@
 //! when nothing moves.
 
 pub mod brush;
+mod drawn;
 pub mod full;
 pub mod gpu;
 pub mod image;
@@ -1902,9 +1903,14 @@ impl App {
         let bg = if self.tab().url == START {
             sk().strip
         } else if self.tab().full_mode { [0xff, 0xff, 0xff, 255] } else { self.tab().dl.as_ref().map_or(sk().strip, |d| d.bg) };
+        let t0 = Instant::now();
         self.gpu.begin(bg);
         self.draw_page();
+        let t1 = t0.elapsed();
         self.draw_chrome();
+        if std::env::var_os("HAYATE_FRAMES").is_some() {
+            eprintln!("frame {:.2} ms (page {:.2})", t0.elapsed().as_secs_f64() * 1000.0, t1.as_secs_f64() * 1000.0);
+        }
         let shoot = matches!(self.shot, Some((_, n)) if n >= 1);
         if shoot {
             if let Some((_, n)) = &mut self.shot {
@@ -2079,6 +2085,10 @@ impl App {
     /// The new-tab scene, drawn from shapes every frame and kept nowhere: a night sky,
     /// a striped vermilion sun, a snow-capped peak, hills, and seigaiha waves.
     fn draw_scene(&mut self) {
+        if self.paper() {
+            self.draw_sheet();
+            return;
+        }
         if sk().light {
             self.draw_sky();
             self.draw_season();
@@ -2400,7 +2410,17 @@ impl App {
         self.bevel(r, true);
     }
 
+    /// Whether to draw in pencil on paper: the skin asks for it and the cpu renderer
+    /// is there to draw into.
+    fn paper(&self) -> bool {
+        sk().drawn && matches!(self.gpu, Painter::Soft(_))
+    }
+
     fn draw_chrome(&mut self) {
+        if self.paper() {
+            self.draw_chrome_drawn();
+            return;
+        }
         let k = self.scale;
         let w = self.w as f32 / k;
         let h = self.h as f32 / k;

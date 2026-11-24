@@ -56,7 +56,7 @@ Drag an image onto the window and it becomes the new tab's wallpaper.
 
 ## skins and the den
 
-joseon is the default look, beige going to white with some sky blue in it. night is the older dark one. Three more open up as the blocker works, wave once 100 ads and trackers are blocked, then neon at 1,000 and gameboy at 10,000.
+joseon is the default look. The chrome and the new tab are a sheet of paper, drawn in graphite and cobalt ink with a wash of sky blue, and set in CMU Typewriter and CMU Serif. The pencil is drawn by the cpu into the frame, in the spirit of p5.brush but without a browser engine under it. It costs about 4.6 ms a frame on a page and 11 ms on the new tab at 1080p, plus 64 KB of paper grain and about 70 KB for each watercolor wash. night is the older dark one. Three more open up as the blocker works, wave once 100 ads and trackers are blocked, then neon at 1,000 and gameboy at 10,000.
 
 A small weasel in the tab strip eats whatever gets blocked, and it changes form at 100, 1,000, 10,000 and 100,000. Click it to open the den, a page with the counts, ten stamps to collect and the skins you have. The counts stay in `%APPDATA%\hayate\stats.txt` and never leave the machine. There are no streaks to keep up and no notifications. All of it has to fit in 1 MB, and a test checks that.
 
@@ -75,4 +75,4 @@ This repo started as hayate, a terminal client for X and YouTube that also talks
 
 ## license
 
-MIT. Filter lists and wallpapers are downloaded when the browser runs, so neither is part of this repo.
+MIT. The fonts in `assets/fonts` are Computer Modern Unicode under the SIL Open Font License, which is in the same folder. Filter lists and wallpapers are downloaded when the browser runs, so neither is part of this repo.
