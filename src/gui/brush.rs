@@ -284,6 +284,14 @@ fn dist(a: Pt, b: Pt) -> f32 {
     ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt()
 }
 
+/// A drawing as ink coverage, one byte a pixel: 255 where the pen went, 0 for bare
+/// paper. The skin decides the color when it is printed.
+pub struct Mask {
+    pub w: u32,
+    pub h: u32,
+    pub a: Vec<u8>,
+}
+
 /// What a pencil line looks like: how wide, how dark, and how unsteady the hand.
 #[derive(Clone, Copy)]
 pub struct Pencil {
@@ -453,6 +461,88 @@ impl<'a> Canvas<'a> {
             i += 1;
         }
         self.graphite(&lines, p.color, p.alpha, Some(&mask));
+    }
+
+    /// Prints part of a drawn plate: `src` is (x, y, w, h) in the mask, and it lands
+    /// in the css box (x, y, w, h), scaled smoothly. `grain` is how much the paper
+    /// shows through the ink, about 0.15 for a pen line and 0.5 for watercolor.
+    #[allow(clippy::too_many_arguments)]
+    pub fn print(&mut self, m: &Mask, src: [u32; 4], x: f32, y: f32, w: f32, h: f32, c: Rgba, alpha: f32, grain: f32) {
+        let k = self.k;
+        let (dx0, dy0) = ((x * k).round() as i32, (y * k).round() as i32);
+        let (dw, dh) = ((w * k).round().max(1.0) as i32, (h * k).round().max(1.0) as i32);
+        let (x0, y0) = (dx0.max(self.clip[0]), dy0.max(self.clip[1]));
+        let (x1, y1) = ((dx0 + dw).min(self.clip[2]), (dy0 + dh).min(self.clip[3]));
+        if x1 <= x0 || y1 <= y0 || src[2] == 0 || src[3] == 0 {
+            return;
+        }
+        if src[2] as i32 == dw && src[3] as i32 == dh {
+            self.print_exact(m, src, dx0, dy0, (x0, y0, x1, y1), c, alpha, grain);
+            return;
+        }
+        // 16.16 fixed point steps through the source, read between pixels
+        let sx = ((src[2] as u64) << 16) / dw as u64;
+        let sy = ((src[3] as u64) << 16) / dh as u64;
+        let mw = m.w as usize;
+        let (lastx, lasty) = (src[0] + src[2] - 1, src[1] + src[3] - 1);
+        let ca = (alpha * c[3] as f32 / 255.0 * 256.0) as u32;
+        let g = (grain * 256.0) as u32;
+        let (cr, cg, cb) = (c[0] as u32, c[1] as u32, c[2] as u32);
+        for yy in y0..y1 {
+            let fy = ((yy - dy0) as u64 * sy + (sy >> 1)).saturating_sub(1 << 15);
+            let iy = (src[1] + (fy >> 16) as u32).min(lasty) as usize;
+            let iy1 = (iy as u32 + 1).min(lasty) as usize;
+            let ty = ((fy >> 8) & 255) as u32;
+            let trow = &self.tile[(yy as usize & (TILE - 1)) * TILE..][..TILE];
+            let row = (yy * self.w) as usize;
+            for xx in x0..x1 {
+                let fx = ((xx - dx0) as u64 * sx + (sx >> 1)).saturating_sub(1 << 15);
+                let ix = (src[0] + (fx >> 16) as u32).min(lastx) as usize;
+                let ix1 = (ix as u32 + 1).min(lastx) as usize;
+                let tx = ((fx >> 8) & 255) as u32;
+                let top = m.a[iy * mw + ix] as u32 * (256 - tx) + m.a[iy * mw + ix1] as u32 * tx;
+                let bot = m.a[iy1 * mw + ix] as u32 * (256 - tx) + m.a[iy1 * mw + ix1] as u32 * tx;
+                let v = (top * (256 - ty) + bot * ty) >> 16;
+                if v < 3 {
+                    continue;
+                }
+                // the valleys of the paper take a little less ink
+                let t = trow[xx as usize & (TILE - 1)] as u32;
+                let paper = 256 - ((g * (255 - t)) >> 8);
+                let a = ((((v * ca) >> 8) * paper) >> 8).min(255);
+                let i = row + xx as usize;
+                let d = self.px[i];
+                let mix = |s: u32, dv: u32| (s * a + dv * (255 - a) + 127) / 255;
+                self.px[i] = (mix(cr, (d >> 16) & 255) << 16) | (mix(cg, (d >> 8) & 255) << 8) | mix(cb, d & 255);
+            }
+        }
+    }
+
+    /// print() for a plate already decoded at the size it is drawn: one read a pixel.
+    #[allow(clippy::too_many_arguments)]
+    fn print_exact(&mut self, m: &Mask, src: [u32; 4], dx0: i32, dy0: i32, (x0, y0, x1, y1): (i32, i32, i32, i32), c: Rgba, alpha: f32, grain: f32) {
+        let ca = (alpha * c[3] as f32 / 255.0 * 256.0) as u32;
+        let g = (grain * 256.0) as u32;
+        let (cr, cg, cb) = (c[0] as u32, c[1] as u32, c[2] as u32);
+        let mw = m.w as usize;
+        for yy in y0..y1 {
+            let srow = &m.a[(src[1] as usize + (yy - dy0) as usize) * mw..][..mw];
+            let trow = &self.tile[(yy as usize & (TILE - 1)) * TILE..][..TILE];
+            let row = (yy * self.w) as usize;
+            for xx in x0..x1 {
+                let v = srow[src[0] as usize + (xx - dx0) as usize] as u32;
+                if v < 3 {
+                    continue;
+                }
+                let t = trow[xx as usize & (TILE - 1)] as u32;
+                let paper = 256 - ((g * (255 - t)) >> 8);
+                let a = ((((v * ca) >> 8) * paper) >> 8).min(255);
+                let i = row + xx as usize;
+                let d = self.px[i];
+                let mix = |s: u32, dv: u32| (s * a + dv * (255 - a) + 127) / 255;
+                self.px[i] = (mix(cr, (d >> 16) & 255) << 16) | (mix(cg, (d >> 8) & 255) << 8) | mix(cb, d & 255);
+            }
+        }
     }
 
     /// Watercolor: the shape pushed out of true a dozen times, each layer adding a

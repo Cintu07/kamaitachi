@@ -3,6 +3,7 @@
 //! display lists; the window thread only draws, scrolls and handles input, and sleeps
 //! when nothing moves.
 
+mod art;
 pub mod brush;
 mod drawn;
 pub mod full;
@@ -1944,7 +1945,11 @@ impl App {
     fn draw_page(&mut self) {
         if self.tab().url == START {
             self.draw_scene();
-        } else if self.wall.is_some() || self.wall_checked {
+        } else {
+            // off the new tab, its drawings are let go
+            art::release_sheet();
+        }
+        if self.tab().url != START && (self.wall.is_some() || self.wall_checked) {
             // off the new tab the wallpaper's pixels go away
             self.wall = None;
             self.wall_checked = false;

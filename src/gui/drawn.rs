@@ -6,6 +6,7 @@
 //! Every stroke has a fixed seed, so a line wobbles the same way on every frame and
 //! nothing shimmers while you move the mouse.
 
+use super::art;
 use super::brush::{self, Canvas, Pencil, Pt};
 use super::play::{self, STAMPS};
 use super::skin::Skin;
@@ -56,130 +57,18 @@ fn again(c: &mut Canvas, cx: f32, cy: f32, p: Pencil, seed: u32) {
     c.pencil(&[(ex - tx * 4.0 + nx * 3.5, ey - ty * 4.0 + ny * 3.5), (ex + tx * 0.8, ey + ty * 0.8), (ex - tx * 4.0 - nx * 3.5, ey - ty * 4.0 - ny * 3.5)], p, seed + 1);
 }
 
-/// The weasel, facing right mid-leap, as a shape to stamp. About 38 by 16.
-const WEASEL: [Pt; 27] = [
-    (0.0, 9.0),
-    (3.0, 6.5),
-    (7.0, 5.5),
-    (11.0, 6.5),
-    (15.0, 5.0),
-    (20.0, 4.5),
-    (25.0, 5.2),
-    (28.5, 4.0),
-    (30.0, 1.0),
-    (31.5, 3.0),
-    (34.5, 3.6),
-    (38.5, 6.2),
-    (35.0, 7.8),
-    (31.5, 9.0),
-    (29.0, 11.0),
-    (31.5, 14.5),
-    (30.0, 15.5),
-    (27.0, 12.5),
-    (22.0, 11.5),
-    (17.0, 11.8),
-    (14.5, 15.5),
-    (12.5, 15.8),
-    (12.8, 12.0),
-    (11.0, 9.2),
-    (6.5, 8.5),
-    (3.0, 9.6),
-    (0.5, 9.4),
-];
-
-/// The spirit at (x, y): an ink stamp of the weasel, with whatever it has grown.
+/// The spirit at (x, y), 22 high: its current form, printed in ink. It hops a
+/// little while it eats.
 fn spirit(c: &mut Canvas, x: f32, y: f32, form: usize, eating: bool, s: &Skin) {
-    let mut body: Vec<Pt> = WEASEL.iter().map(|&(px, py)| (x + px, y + py)).collect();
+    let Some(m) = art::spirits() else { return };
+    let r = art::SPIRITS[form.min(4)].map(u32::from);
+    let h = 22.0;
+    let w = h * r[2] as f32 / r[3] as f32;
+    let hop = if eating { -1.5 } else { 0.0 };
+    c.print(&m, r, x, y + hop, w, h, s.ink, 1.0, 0.15);
     if eating {
-        // the jaw drops open
-        body[12] = (x + 37.0, y + 10.2);
+        c.stamp(&brush::ellipse(x + w + 2.5, y + h * 0.45, 1.3, 1.3, 8), RUST, 1.0, 92);
     }
-    // extra tails sweep up behind as it grows
-    let tails = [0, 1, 1, 2, 3][form];
-    for t in 0..tails {
-        let lift = 3.0 + t as f32 * 3.2;
-        let sweep = [(x + 10.0, y + 6.0), (x + 5.0, y + 5.5 - lift * 0.5), (x + 1.0, y + 6.5 - lift), (x - 3.0, y + 4.0 - lift)];
-        c.pencil(&sweep, Pencil { width: 2.2, ..ink(s) }, 400 + t as u32);
-    }
-    c.stamp(&body, s.ink, 0.95, 77);
-    c.stamp(&brush::ellipse(x + 33.2, y + 4.9, 0.9, 0.9, 8), s.panel, 1.0, 78);
-    if form >= 1 {
-        // the blade on its tail, in sky blue
-        let arc: Vec<Pt> = (0..=10)
-            .map(|i| {
-                let a = 2.2 + i as f32 / 10.0 * 1.9;
-                (x + 1.0 + 6.0 * a.cos(), y + 12.0 + 6.0 * a.sin())
-            })
-            .collect();
-        c.pencil(&arc, Pencil { width: 1.8, color: s.full, alpha: 0.9, wobble: 0.2 }, 90);
-    }
-    if form >= 3 {
-        let sp = brush::spiral(x + 19.0, y + 8.0, 6.0, 21.0, 1.3, 0.6);
-        c.pencil(&sp, Pencil { width: 0.9, alpha: 0.35, ..graphite(s) }, 91);
-    }
-    if eating {
-        c.stamp(&brush::ellipse(x + 40.0, y + 9.0, 1.2, 1.2, 8), RUST, 1.0, 92);
-    }
-}
-
-/// A crescent moon: the circle at (cx, cy) with another one bitten out of its left.
-fn crescent(cx: f32, cy: f32, r: f32) -> Vec<Pt> {
-    let (d, ri) = (r * 0.5, r * 0.88);
-    let a = ((ri * ri - r * r - d * d) / (2.0 * r * d)).clamp(-1.0, 1.0).acos();
-    let b = ((d * d + ri * ri - r * r) / (2.0 * d * ri)).clamp(-1.0, 1.0).acos();
-    let mut pts = Vec::new();
-    for i in 0..=24 {
-        let t = -a + 2.0 * a * i as f32 / 24.0;
-        pts.push((cx + r * t.cos(), cy + r * t.sin()));
-    }
-    for i in 0..=24 {
-        let t = b - 2.0 * b * i as f32 / 24.0;
-        pts.push((cx - d + ri * t.cos(), cy + ri * t.sin()));
-    }
-    pts
-}
-
-/// The mark for one stamp in the book, as cobalt ink.
-fn stamp_mark(c: &mut Canvas, id: &str, cx: f32, cy: f32, r: f32, col: Rgba, seed: u32) {
-    let inkp = Pencil { width: 1.6, color: col, alpha: 0.95, wobble: 0.3 };
-    match id {
-        "first-cut" => c.stamp(&brush::star(cx, cy, r, 0.22, 4, 0.0), col, 0.95, seed),
-        "hundred" => c.stamp(&brush::star(cx, cy, r, 0.42, 5, 0.0), col, 0.95, seed),
-        "thousand" => c.stamp(&brush::star(cx, cy, r, 0.3, 8, 0.2), col, 0.95, seed),
-        "whirlwind" => c.pencil(&brush::spiral(cx, cy, 1.0, r, 2.4, 0.0), Pencil { width: 2.4, ..inkp }, seed),
-        "ward" => {
-            c.pencil(&brush::loop_around(cx, cy, r, r, 0.4), Pencil { width: 1.4, ..inkp }, seed);
-            c.stamp(&brush::star(cx, cy, r * 0.55, 0.42, 5, 0.0), col, 0.95, seed + 1);
-        }
-        "reader" => c.stamp(&crescent(cx, cy, r * 0.85), col, 0.95, seed),
-        "both-blades" => {
-            c.stamp(&brush::star(cx - r * 0.3, cy + r * 0.15, r * 0.75, 0.2, 4, 0.0), col, 0.95, seed);
-            c.stamp(&brush::star(cx + r * 0.45, cy - r * 0.35, r * 0.5, 0.2, 4, 0.4), col, 0.95, seed + 1);
-        }
-        "night-owl" => {
-            c.stamp(&crescent(cx - r * 0.1, cy, r * 0.8), col, 0.95, seed);
-            c.stamp(&brush::star(cx + r * 0.55, cy - r * 0.5, r * 0.3, 0.42, 5, 0.0), col, 0.95, seed + 1);
-        }
-        "regular" => {
-            c.stamp(&brush::ellipse(cx, cy, r * 0.48, r * 0.48, 24), col, 0.95, seed);
-            c.stamp(&brush::star(cx, cy, r, 0.62, 12, 0.13), col, 0.55, seed + 1);
-        }
-        _ => c.stamp(&brush::star(cx, cy, r, 0.14, 6, 0.0), col, 0.95, seed),
-    }
-}
-
-/// A leaf, `len` long, pointing at `angle` radians.
-fn leaf(cx: f32, cy: f32, len: f32, angle: f32) -> Vec<Pt> {
-    let (s, c) = angle.sin_cos();
-    let mut pts = Vec::new();
-    for side in [1.0f32, -1.0] {
-        for i in 0..=12 {
-            let t = if side > 0.0 { i as f32 / 12.0 } else { 1.0 - i as f32 / 12.0 };
-            let (lx, ly) = (len * (t - 0.5), side * len * 0.27 * (std::f32::consts::PI * t).sin().powf(0.8));
-            pts.push((cx + lx * c - ly * s, cy + lx * s + ly * c));
-        }
-    }
-    pts
 }
 
 impl App {
@@ -197,7 +86,7 @@ impl App {
     fn book(&self) -> Rect {
         let (w, h) = (self.w as f32 / self.scale, self.h as f32 / self.scale);
         let bw = 58.0 * STAMPS.len() as f32;
-        Rect::new(w / 2.0 - bw / 2.0, h - 118.0, bw, 58.0)
+        Rect::new(w / 2.0 - bw / 2.0, h - 112.0, bw, 58.0)
     }
 
     fn measure(&mut self, s: &str, size: f32, italic: bool, family: &str) -> f32 {
@@ -228,7 +117,7 @@ impl App {
         self.hits.clear();
         let n = self.tabs.len();
         let x0 = 44.0;
-        let tw = ((w - x0 - 44.0 - 72.0) / n as f32).clamp(70.0, 236.0);
+        let tw = ((w - x0 - 44.0 - 80.0) / n as f32).clamp(70.0, 236.0);
         let cur = self.cur;
         let hover = self.hover;
         let gp = graphite(&s);
@@ -272,8 +161,8 @@ impl App {
         let focused = self.edit.focused;
         let (form, _, _) = play::form(self.stats.blocked);
         let eating = self.ate.is_some_and(|t| (t.elapsed().as_millis() / 90) % 2 == 0);
-        let spirit_at = (w - 56.0, 11.0);
-        let spirit_r = Rect::new(spirit_at.0 - 8.0, 4.0, 54.0, TAB_H - 6.0);
+        let spirit_at = (w - 62.0, 9.0);
+        let spirit_r = Rect::new(spirit_at.0 - 6.0, 4.0, 62.0, TAB_H - 6.0);
         let nr = Rect::new(x0 + n as f32 * tw + 2.0, 10.0, 24.0, 24.0);
 
         // ---- paper and pencil
@@ -371,7 +260,7 @@ impl App {
                 c.pencil(&[(0.0, TOP - 1.2), (w * prog, TOP - 1.5)], Pencil { width: 2.0, ..ink(&s) }, 181);
             }
             if hover == Hit::Spirit {
-                c.stamp(&brush::ellipse(spirit_r.x + 27.0, 21.0, 30.0, 15.0, 28), s.hover, 1.0, 190);
+                c.stamp(&brush::ellipse(spirit_r.x + 31.0, 20.0, 32.0, 15.0, 28), s.hover, 1.0, 190);
             }
             spirit(&mut c, spirit_at.0, spirit_at.1, form, eating, &s);
         }
@@ -489,115 +378,77 @@ impl App {
         }
     }
 
-    /// The new tab: a sheet of paper with a sky blue wash, the name in serif,
-    /// a line of what kamaitachi has done, and the stamp book along the bottom.
+    /// The new tab: the name and a line of what kamaitachi has done, in the middle of
+    /// the sheet, doodles for the season in the margins, and the stamp book along
+    /// the bottom.
     pub(super) fn draw_sheet(&mut self) {
         let k = self.scale;
         let (w, h) = (self.w as f32 / k, self.h as f32 / k);
         let s = sk();
-        let hh = h - TOP;
-        let mid = w / 2.0;
-        let title_y = TOP + hh * 0.26;
-        let title = "kamaitachi";
-        let tsize = (hh * 0.11).clamp(44.0, 84.0);
-        let title_w = self.measure(title, tsize, false, SERIF);
-        let line = format!(
-            "{:.1} MB in use  ·  {} ads and trackers cut  ·  day {}",
-            private_mb() + self.full_mb,
-            self.stats.blocked,
-            self.stats.days.max(1)
-        );
-        let line_w = self.measure(&line, 13.0, false, TYPEWRITER);
-        let sub = "a browser that stays light";
-        let sub_w = self.measure(sub, 15.0, false, TYPEWRITER);
         let book = self.book();
-        let (book_x, book_y, book_w) = (book.x, book.y, book.w);
-        let cell = 58.0;
+        let mid = w / 2.0;
+        let title = "kamaitachi";
+        let tsize = ((h - TOP) * 0.1).clamp(40.0, 80.0);
+        let title_w = self.measure(title, tsize, false, SERIF);
+        let mb = format!("{:.1} MB in use", private_mb() + self.full_mb);
+        let done = format!("{} ads and trackers cut  \u{b7}  day {}", self.stats.blocked, self.stats.days.max(1));
+        let line = format!("{mb}  \u{b7}  {done}");
+        let sub = "a browser that stays light";
+        let block_h = tsize * 1.3 + 30.0 + 26.0;
+        let ty = TOP + (book.y - TOP - block_h) * 0.42;
+        let uy = ty + tsize * 1.2;
         let month = {
             let mut st = windows_sys::Win32::Foundation::SYSTEMTIME { wYear: 0, wMonth: 0, wDayOfWeek: 0, wDay: 0, wHour: 0, wMinute: 0, wSecond: 0, wMilliseconds: 0 };
             unsafe { windows_sys::Win32::System::SystemInformation::GetLocalTime(&mut st) };
             st.wMonth
         };
+        let season = match month {
+            3..=5 => 0,
+            6..=8 => 1,
+            9..=11 => 2,
+            _ => 3,
+        };
         let earned: Vec<bool> = STAMPS.iter().map(|st| self.stats.has(st.id)).collect();
         let gp = graphite(&s);
         let Some(mut c) = self.gpu.canvas(k) else { return };
-        c.clip(0.0, TOP, w, hh);
-        c.paper(0.0, TOP, w, hh, [0xf7, 0xf3, 0xe9, 255], 0.05);
-        // the sky: a big wash up and to the right, a faint one low on the left
-        c.wash(&brush::ellipse(w * 0.74, TOP + hh * 0.2, w * 0.3, hh * 0.2, 18), s.accent, 0.6, 2024);
-        c.wash(&brush::ellipse(w * 0.14, TOP + hh * 0.82, w * 0.16, hh * 0.1, 14), s.accent, 0.28, 2025);
-        // a whirlwind for the weasel to ride, pencilled beside the name
-        let sx = mid - title_w / 2.0 - tsize * 0.75;
-        c.pencil(&brush::spiral(sx, title_y + tsize * 0.55, 3.0, tsize * 0.42, 2.2, 0.8), Pencil { width: 1.2, alpha: 0.7, ..gp }, 31);
-        // stars, as if stamped by hand
-        let stars: [(f32, f32, f32, usize, f32, bool); 7] = [
-            (0.12, 0.16, 13.0, 4, 0.2, false),
-            (0.2, 0.42, 7.0, 5, 0.42, false),
-            (0.86, 0.5, 9.0, 4, 0.22, false),
-            (0.64, 0.1, 6.0, 8, 0.32, false),
-            (0.92, 0.18, 16.0, 4, 0.18, false),
-            (0.07, 0.6, 5.0, 4, 0.25, true),
-            (0.78, 0.64, 6.5, 5, 0.42, false),
-        ];
-        for (i, (fx, fy, r, pts, inner, red)) in stars.into_iter().enumerate() {
-            c.stamp(&brush::star(w * fx, TOP + hh * fy, r, inner, pts, i as f32 * 0.3), if red { RUST } else { s.ink }, 0.92, 300 + i as u32);
-        }
-        // a pencil stroke under the name
-        let uy = title_y + tsize * 1.18;
+        c.clip(0.0, TOP, w, h - TOP);
+        c.paper(0.0, TOP, w, h - TOP, [0xf7, 0xf3, 0xe9, 255], 0.05);
         c.sketch(&[(mid - title_w * 0.42, uy + 2.0), (mid, uy), (mid + title_w * 0.44, uy + 1.5)], Pencil { width: 1.3, alpha: 0.75, ..gp }, 32);
-        // the stamp book: earned ones in ink, the rest waiting as faint rings
-        for (i, st) in STAMPS.iter().enumerate() {
-            let cx = book_x + cell * (i as f32 + 0.5);
-            let cy = book_y + 20.0;
-            if earned[i] {
-                stamp_mark(&mut c, st.id, cx, cy, 15.0, s.ink, 500 + i as u32 * 7);
-            } else {
-                c.pencil(&brush::loop_around(cx, cy, 14.0, 14.0, i as f32), Pencil { alpha: 0.35, ..gp }, 600 + i as u32);
+        // doodles for the season, wherever they do not land on something else
+        if let Some((m, rects)) = art::season(season) {
+            let spots: [(f32, f32); 12] = [(0.04, 0.06), (0.24, 0.16), (0.05, 0.48), (0.17, 0.8), (0.36, 0.94), (0.93, 0.92), (0.96, 0.46), (0.74, 0.12), (0.12, 0.97), (0.66, 0.96), (0.83, 0.7), (0.5, 0.04)];
+            let text_w = title_w.max(520.0);
+            let busy = [Rect::new(mid - text_w / 2.0 - 20.0, ty - 20.0, text_w + 40.0, block_h + 40.0), Rect::new(book.x - 10.0, book.y - 10.0, book.w + 20.0, book.h + 30.0)];
+            for (i, (fx, fy)) in spots.into_iter().enumerate() {
+                let r = rects[(i * 3) % rects.len()].map(u32::from);
+                let scale = 0.62 + (i % 3) as f32 * 0.1;
+                let (dw, dh) = (r[2] as f32 * scale, r[3] as f32 * scale);
+                let (x, y) = (fx * (w - dw), TOP + 8.0 + fy * (h - TOP - dh - 16.0));
+                let me = Rect::new(x, y, dw, dh);
+                if busy.iter().any(|b| b.x < me.x + me.w && me.x < b.x + b.w && b.y < me.y + me.h && me.y < b.y + b.h) {
+                    continue;
+                }
+                let col = if season == 2 && i % 3 == 1 { RUST } else { s.muted };
+                c.print(&m, r, x, y, dw, dh, col, 0.8, 0.3);
             }
         }
-        // something for the time of year, drawn in pencil
-        for i in 0..9u32 {
-            let fx = [0.05, 0.27, 0.36, 0.58, 0.69, 0.83, 0.95, 0.44, 0.16][i as usize];
-            let fy = [0.3, 0.68, 0.9, 0.78, 0.92, 0.84, 0.72, 0.6, 0.94][i as usize];
-            let (x, y) = (w * fx, TOP + hh * fy);
-            if (y - book_y - 20.0).abs() < 34.0 && (x - mid).abs() < book_w / 2.0 + 20.0 {
-                continue;
-            }
-            let turn = i as f32 * 1.37;
-            match month {
-                9..=11 => {
-                    let l = leaf(x, y, 22.0 + (i % 3) as f32 * 6.0, turn);
-                    let col = if i % 4 == 1 { RUST } else { s.muted };
-                    c.hatch(&l, 35.0 + i as f32 * 20.0, 2.6, Pencil { width: 0.8, color: col, alpha: 0.6, wobble: 0.2 }, 700 + i);
-                    c.pencil(&{ let mut p = l.clone(); p.push(l[0]); p }, Pencil { color: col, alpha: 0.85, ..gp }, 720 + i);
-                    let (sn, cs) = turn.sin_cos();
-                    let half = (22.0 + (i % 3) as f32 * 6.0) * 0.5;
-                    c.pencil(&[(x - cs * half * 1.2, y - sn * half * 1.2), (x + cs * half, y + sn * half)], Pencil { color: col, alpha: 0.7, ..gp }, 740 + i);
-                }
-                12 | 1 | 2 => {
-                    for j in 0..3 {
-                        let a = turn + j as f32 * std::f32::consts::PI / 3.0;
-                        let (sn, cs) = a.sin_cos();
-                        c.pencil(&[(x - cs * 6.0, y - sn * 6.0), (x + cs * 6.0, y + sn * 6.0)], Pencil { color: s.ink_dim, ..gp }, 760 + i * 3 + j);
-                    }
-                }
-                3..=5 => {
-                    for j in 0..5 {
-                        let a = turn + j as f32 * std::f32::consts::TAU / 5.0;
-                        c.pencil(&brush::loop_around(x + a.cos() * 5.0, y + a.sin() * 5.0, 4.0, 4.0, a), Pencil { color: RUST, alpha: 0.55, ..gp }, 800 + i * 5 + j);
-                    }
-                }
-                _ => {
-                    c.stamp(&brush::ellipse(x, y, 2.0, 2.0, 10), s.ink, 0.9, 850 + i);
-                    c.pencil(&brush::loop_around(x, y, 6.0, 6.0, turn), Pencil { alpha: 0.35, ..gp }, 860 + i);
-                }
+        // the stamp book: earned stamps in full ink, the rest a faint print of what
+        // is still to come
+        if let Some(m) = art::stamps() {
+            let cell = book.w / STAMPS.len() as f32;
+            for (i, got) in earned.iter().enumerate() {
+                let size = 42.0;
+                let (x, y) = (book.x + cell * i as f32 + (cell - size) / 2.0, book.y);
+                c.print(&m, [i as u32 * art::STAMP_CELL, 0, art::STAMP_CELL, art::STAMP_CELL], x, y, size, size, s.ink, if *got { 0.95 } else { 0.13 }, 0.2);
             }
         }
-        self.words(title, mid - title_w / 2.0, title_y, tsize, false, SERIF, s.ink, title_w + 8.0);
-        self.words(sub, mid - sub_w / 2.0, uy + 16.0, 15.0, false, TYPEWRITER, s.muted, sub_w + 4.0);
-        self.words(&line, mid - line_w / 2.0, uy + 44.0, 13.0, false, TYPEWRITER, s.text, line_w + 4.0);
-        let note = "stamps  ·  click the weasel for the den";
+        self.words(title, mid - title_w / 2.0, ty, tsize, false, SERIF, s.ink, title_w + 8.0);
+        for (t, size, color, y) in [(sub, 15.0, s.muted, uy + 16.0), (line.as_str(), 13.0, s.text, uy + 46.0)] {
+            let lw = self.measure(t, size, false, TYPEWRITER);
+            self.words(t, mid - lw / 2.0, y, size, false, TYPEWRITER, color, lw + 4.0);
+        }
+        let note = "stamps  \u{b7}  click the weasel for the den";
         let note_w = self.measure(note, 11.5, false, TYPEWRITER);
-        self.words(note, mid - note_w / 2.0, book_y + 46.0, 11.5, false, TYPEWRITER, s.faint, note_w + 4.0);
+        self.words(note, mid - note_w / 2.0, book.y + 50.0, 11.5, false, TYPEWRITER, s.faint, note_w + 4.0);
     }
 }
