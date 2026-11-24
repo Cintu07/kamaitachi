@@ -2,6 +2,10 @@
 
 kamaitachi is a web browser for Windows that tries to use as little memory as it can. Most pages go through its own engine, which parses the HTML and CSS, lays the page out and paints it on the CPU into a single buffer. Sites that are really applications, like YouTube or Zoom, open in Chromium (the WebView2 runtime that comes with Windows), and only when one of them needs it.
 
+![the new tab](docs/newtab.jpg)
+
+![a Wikipedia article in the light engine](docs/page.jpg)
+
 These are private bytes, measured on a Windows 11 laptop in November 2026.
 
 | page | engine | memory |
@@ -14,6 +18,16 @@ These are private bytes, measured on a Windows 11 laptop in November 2026.
 The budget is 500 MB for both. When the total gets close, the tab you looked at longest ago is parked. Its Chromium process exits and the tab keeps a screenshot, so clicking it brings the page back.
 
 The kamaitachi is a weasel from Japanese folklore that rides whirlwinds and cuts too fast to see.
+
+## install
+
+Download `kamaitachi.exe` and `install.ps1` from the latest release into one folder, then run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+It installs for your user only, adds kamaitachi to the Start menu and lists it under Default apps. `-Uninstall` takes it out again. The exe is not signed yet, so Windows SmartScreen will ask before it first runs.
 
 ## build and run
 
@@ -56,7 +70,7 @@ Drag an image onto the window and it becomes the new tab's wallpaper.
 
 ## skins and the den
 
-joseon is the default look. The chrome and the new tab are a sheet of paper, drawn in graphite and cobalt ink with a wash of sky blue, and set in CMU Typewriter and CMU Serif. The pencil is drawn by the cpu into the frame, in the spirit of p5.brush but without a browser engine under it. It costs about 4.6 ms a frame on a page and 11 ms on the new tab at 1080p, plus 64 KB of paper grain and about 70 KB for each watercolor wash. night is the older dark one. Three more open up as the blocker works, wave once 100 ads and trackers are blocked, then neon at 1,000 and gameboy at 10,000.
+joseon is the default look. The chrome and the new tab are a sheet of paper, drawn in graphite and cobalt ink with a wash of sky blue, and set in CMU Typewriter and CMU Serif. The pencil is drawn by the cpu into the frame, in the spirit of p5.brush but without a browser engine under it. It costs about 4 ms a frame at 1080p, plus 64 KB of paper grain. The weasel, the stamps and the season doodles are drawings kept as 65 KB of grayscale masks that the skin colors when they are printed. night is the older dark one. Three more open up as the blocker works, wave once 100 ads and trackers are blocked, then neon at 1,000 and gameboy at 10,000.
 
 A small weasel in the tab strip eats whatever gets blocked, and it changes form at 100, 1,000, 10,000 and 100,000. Click it to open the den, a page with the counts, ten stamps to collect and the skins you have. The counts stay in `%APPDATA%\hayate\stats.txt` and never leave the machine. There are no streaks to keep up and no notifications. All of it has to fit in 1 MB, and a test checks that.
 
