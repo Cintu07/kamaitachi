@@ -35,7 +35,7 @@ Chromium starts with flags. Each one saved memory on a YouTube video page. Turni
 
 ## blocking
 
-Ads, trackers, malware and phishing are blocked by omamori. It reads EasyList, EasyPrivacy, uBlock Origin's own lists, URLhaus and the Phishing URL Blocklist. That is about 300,000 rules, and they take 7.26 MB. The lists are downloaded to `%APPDATA%\hayate\filters` and fetched again after four days.
+Ads, trackers, malware and phishing are blocked by omamori. It reads EasyList, EasyPrivacy, uBlock Origin's own lists, URLhaus and the Phishing URL Blocklist. That is about 300,000 rules, and they take 4.85 MB. The lists are downloaded to `%APPDATA%\hayate\filters` and fetched again after four days.
 
 A page that is on a malware or phishing list does not load at all. You get a warning page with a way back, plus a way through if you know better. `hayate filters` prints the rule counts and memory, and `HAYATE_NOBLOCK=1` turns blocking off.
 
@@ -48,10 +48,17 @@ A page that is on a malware or phishing list does not load at all. You get a war
 | `Ctrl+Tab`, `Ctrl+1` to `9` | next tab, a tab by number |
 | `Alt+Left`, `Alt+Right` | back, forward |
 | `Ctrl+Shift+E` | this site in the other engine |
+| `Ctrl+Shift+K` | the next skin |
 | `Ctrl` `+` / `-` / `0` | zoom |
 | `F5` | reload |
 
 Drag an image onto the window and it becomes the new tab's wallpaper.
+
+## skins and the den
+
+joseon is the default look, beige going to white with some sky blue in it. night is the older dark one. Three more open up as the blocker works, wave once 100 ads and trackers are blocked, then neon at 1,000 and gameboy at 10,000.
+
+A small weasel in the tab strip eats whatever gets blocked, and it changes form at 100, 1,000, 10,000 and 100,000. Click it to open the den, a page with the counts, ten stamps to collect and the skins you have. The counts stay in `%APPDATA%\hayate\stats.txt` and never leave the machine. There are no streaks to keep up and no notifications. All of it has to fit in 1 MB, and a test checks that.
 
 ## settings
 
