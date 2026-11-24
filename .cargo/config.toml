@@ -1,0 +1,3 @@
+[net]
+# omamori is fetched with git itself, which knows how to log in to github
+git-fetch-with-cli = true

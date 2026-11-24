@@ -1,0 +1,68 @@
+/* the user agent stylesheet: the html spec's rendering section, trimmed to what this
+   engine draws */
+html, address, blockquote, body, center, dialog, div, figure, figcaption, footer, form,
+header, hr, legend, listing, main, p, plaintext, pre, search, xmp, article, aside, h1, h2,
+h3, h4, h5, h6, hgroup, nav, section, dd, dl, dt, menu, ol, ul, details, summary, fieldset,
+optgroup, noscript { display: block; }
+head, script, style, title, meta, link, base, template, area, datalist, noembed, noframes,
+param, rp, rt, input[type=hidden], dialog:not([open]), iframe, video, audio, canvas, object,
+embed, map, track, source, [hidden], option, frameset, frame { display: none; }
+li { display: list-item; }
+table { display: table; border-spacing: 2px; border-collapse: separate; box-sizing: border-box; }
+caption { display: table-caption; text-align: center; }
+thead, tbody, tfoot { display: table-row-group; vertical-align: middle; }
+tr { display: table-row; vertical-align: inherit; }
+td, th { display: table-cell; padding: 1px; vertical-align: inherit; }
+th { font-weight: bold; text-align: center; }
+col, colgroup { display: table-column; }
+img, svg, input, button, select, textarea { display: inline-block; }
+
+body { margin: 8px; }
+p, blockquote, figure, dl, menu, ol, ul, pre, listing, xmp, plaintext { margin-top: 1em; margin-bottom: 1em; }
+blockquote, figure { margin-left: 40px; margin-right: 40px; }
+dd { margin-left: 40px; }
+ol, ul, menu { padding-left: 40px; }
+ul { list-style-type: disc; }
+ol { list-style-type: decimal; }
+ul ul, ol ul, menu ul { list-style-type: circle; }
+ul ul ul, ol ul ul, ul ol ul { list-style-type: square; }
+ul ul, ul ol, ol ul, ol ol, menu ul, ul menu { margin-top: 0; margin-bottom: 0; }
+h1 { font-size: 2em; margin: 0.67em 0; }
+h2 { font-size: 1.5em; margin: 0.83em 0; }
+h3 { font-size: 1.17em; margin: 1em 0; }
+h4 { font-size: 1em; margin: 1.33em 0; }
+h5 { font-size: 0.83em; margin: 1.67em 0; }
+h6 { font-size: 0.67em; margin: 2.33em 0; }
+h1, h2, h3, h4, h5, h6, b, strong, th, dt { font-weight: bold; }
+dt { font-weight: normal; }
+hr { margin: 0.5em auto; border: 0; border-top: 1px solid #c8c8c8; height: 0; }
+pre, xmp, listing, plaintext { white-space: pre; }
+pre, code, kbd, samp, tt, xmp, listing, plaintext { font-family: monospace; font-size: 0.875em; }
+pre code, pre kbd, pre samp, pre tt { font-size: 1em; }
+i, em, cite, dfn, var, address { font-style: italic; }
+u, ins { text-decoration: underline; }
+s, strike, del { text-decoration: line-through; }
+a:link { color: #0000ee; text-decoration: underline; }
+small { font-size: smaller; }
+big { font-size: larger; }
+sub, sup { font-size: smaller; }
+sub { vertical-align: sub; }
+sup { vertical-align: super; }
+mark { background-color: yellow; color: black; }
+center { text-align: center; }
+center > table, center > form > table { margin-left: auto; margin-right: auto; }
+nobr { white-space: nowrap; }
+q::before { content: open-quote; }
+q::after { content: close-quote; }
+fieldset { margin: 0 2px; padding: 0.35em 0.75em 0.625em; border: 2px groove #c0c0c0; }
+legend { padding: 0 2px; }
+details:not([open]) > :not(summary) { display: none; }
+summary { display: list-item; list-style-type: disclosure-closed; }
+input, select, textarea, button { font-size: 13.33px; font-family: system-ui; }
+input, textarea, select { border: 1px solid #767676; padding: 2px 4px; background-color: white; color: black; }
+input { width: 150px; }
+input[type=checkbox], input[type=radio] { width: 13px; height: 13px; padding: 0; margin: 3px 4px; }
+input[type=submit], input[type=button], input[type=reset], button {
+  border: 1px solid #767676; padding: 2px 8px; background-color: #efefef; color: black; border-radius: 3px; width: auto; }
+textarea { width: 300px; height: 36px; }
+img { aspect-ratio: auto; }

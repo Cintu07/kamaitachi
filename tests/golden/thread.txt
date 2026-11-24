@@ -1,0 +1,15 @@
+ ● Thread
+ ──────────────────────────────────────────────────────────
+  ▎ root author @root · 2h
+  ▎ the root post of a thread
+
+     │ replier @re · 1h
+     │ a reply
+
+        │ root author @root · 30m
+        │ a reply to the reply, wrapped because it is
+        │ long enough to wrap
+
+                          · end ·
+
+

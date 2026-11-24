@@ -1,0 +1,25 @@
+   Home  ● New tab
+ ──────────────────────────────────────────────────────────────────────────────
+
+
+
+                                  疾風 hayate
+                        the web and your feeds, as text
+
+        ╭──────────────────────────────────────────────────────────────╮
+        │ / Search the web or type an address                          │
+        ╰──────────────────────────────────────────────────────────────╯
+
+        Your services
+          ● X             ● YouTube       ● Claude        ● ChatGPT
+
+        Read
+          Hacker News     Lobsters        Wikipedia       This Week in…
+
+
+        ctrl+k commands  ·  ctrl+l address  ·  ctrl+t new tab  ·  ? keys
+
+
+
+
+

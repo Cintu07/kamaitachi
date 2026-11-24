@@ -1,0 +1,19 @@
+ ● Claude
+ ──────────────────────────────────────────────────────────
+
+
+                                         show me a loop
+
+    ● Claude  claude-opus-5-5
+    here:
+    ```
+    for i in 0..3 {
+        println!("{i}");
+    }
+    ```
+    that prints 0, 1, 2 😀
+
+
+    ╭──────────────────────────────── claude-opus-5-5 ─╮
+    │ next question                                    │
+    ╰────────────── enter send · shift+enter new line ─╯

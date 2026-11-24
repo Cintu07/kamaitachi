@@ -1,0 +1,25 @@
+ ● Home
+ ──────────────────────────────────────────────────────────────────────────────
+        ╭─ Keys ───────────────────────────────────────────────────────╮
+        │ ctrl+k               commands: everything, searchable        │
+        │ ctrl+l               go to an address or search the web      │
+        │ ctrl+t  ctrl+w       new tab, close tab                      │
+        │ ctrl+tab  alt+1..9   next tab, jump to a tab                 │
+        │ j k  ↑ ↓             move, or scroll a page                  │
+        │ space  pgup pgdn     a screen at a time                      │
+        │ enter                open: thread, video, link               │
+        │ tab  shift+tab       on a page: next and previous link       │
+        │ bksp  L              back, forward                           │
+        │ r                    reload a page; reply to a post          │
+        │ /                    search                                  │
+        │ c                    comments of a video                     │
+        │ i  l  n              media link, like, new post or chat      │
+        │ o                    open in your system browser             │
+        │ u                    reopen the last closed tab              │
+        │ e                    export this view to markdown            │
+        │ :model  :system      in a chat: switch model or prompt       │
+        │ ctrl+c               quit                                    │
+        │                                                              │
+        ╰──────────────────────────────────────────────────────────────╯
+
+
