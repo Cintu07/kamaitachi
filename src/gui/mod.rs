@@ -240,6 +240,8 @@ pub fn run(urls: Vec<String>) -> Result<(), String> {
             lpfnWndProc: Some(wndproc),
             hInstance: inst.into(),
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+            // icon 1 is the weasel seal build.rs puts in kamaitachi.exe
+            hIcon: LoadIconW(Some(inst.into()), PCWSTR(1 as *const u16)).unwrap_or_default(),
             lpszClassName: class,
             hbrBackground: HBRUSH::default(),
             ..Default::default()

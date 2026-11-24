@@ -1,3 +1,5 @@
+<img src="docs/logo.png" width="112" alt="kamaitachi logo, a weasel running across a cobalt seal">
+
 # kamaitachi
 
 kamaitachi is a web browser for Windows that tries to use as little memory as it can. Most pages go through its own engine, which parses the HTML and CSS, lays the page out and paints it on the CPU into a single buffer. Sites that are really applications, like YouTube or Zoom, open in Chromium (the WebView2 runtime that comes with Windows), and only when one of them needs it.

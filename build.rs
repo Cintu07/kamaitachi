@@ -70,6 +70,7 @@ fn main() {
     }
     println!("cargo:rustc-link-arg-bins=delayimp.lib");
     embed_webview2_loader();
+    embed_icon();
     for f in ["EAW_wide.txt", "Emoji.txt", "GBP.txt", "InCB.txt", "ZeroWidthGC.txt"] {
         println!("cargo:rerun-if-changed=data/ucd/{f}");
     }
@@ -127,6 +128,58 @@ fn main() {
 
 /// Copies the WebView2 loader dll (from the webview2-com-sys crate) where the binary can
 /// embed it, so hayate stays one file. An empty file means "look next to the exe".
+/// Gives kamaitachi.exe its icon. The linker takes a compiled resource file
+/// directly, and the format is simple enough to write here: each image of the .ico
+/// becomes an RT_ICON resource and one RT_GROUP_ICON lists them. That saves pulling
+/// in a resource compiler or a crate to call one. Only the window browser gets it;
+/// the terminal client stays as it was.
+fn embed_icon() {
+    println!("cargo:rerun-if-changed=assets/kamaitachi.ico");
+    let Ok(ico) = std::fs::read("assets/kamaitachi.ico") else { return };
+    let u16_at = |i: usize| u16::from_le_bytes([ico[i], ico[i + 1]]);
+    let u32_at = |i: usize| u32::from_le_bytes([ico[i], ico[i + 1], ico[i + 2], ico[i + 3]]);
+    let count = u16_at(4) as usize;
+    let mut res = Vec::new();
+    // a .res file opens with one empty entry
+    resource(&mut res, 0, 0, &[]);
+    let mut group = vec![0, 0, 1, 0];
+    group.extend_from_slice(&(count as u16).to_le_bytes());
+    for i in 0..count {
+        let e = 6 + 16 * i;
+        let (size, offset) = (u32_at(e + 8) as usize, u32_at(e + 12) as usize);
+        resource(&mut res, 3, i as u16 + 1, &ico[offset..offset + size]);
+        // the group's entry is the .ico entry with its file offset swapped for an id
+        group.extend_from_slice(&ico[e..e + 12]);
+        group.extend_from_slice(&(i as u16 + 1).to_le_bytes());
+    }
+    resource(&mut res, 14, 1, &group);
+    let out = std::path::Path::new(&std::env::var("OUT_DIR").unwrap()).join("kamaitachi.res");
+    std::fs::write(&out, res).unwrap();
+    println!("cargo:rustc-link-arg-bin=kamaitachi={}", out.display());
+}
+
+/// One entry of a .res file: a header naming the type and id by number, then the
+/// data, each padded to four bytes.
+fn resource(out: &mut Vec<u8>, kind: u16, id: u16, data: &[u8]) {
+    out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    out.extend_from_slice(&32u32.to_le_bytes());
+    out.extend_from_slice(&[0xff, 0xff]);
+    out.extend_from_slice(&kind.to_le_bytes());
+    out.extend_from_slice(&[0xff, 0xff]);
+    out.extend_from_slice(&id.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    // moveable, pure, discardable; US English
+    let flags: u16 = if kind == 0 { 0 } else { 0x1030 };
+    out.extend_from_slice(&flags.to_le_bytes());
+    out.extend_from_slice(&(if kind == 0 { 0u16 } else { 0x0409 }).to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(data);
+    while out.len() % 4 != 0 {
+        out.push(0);
+    }
+}
+
 fn embed_webview2_loader() {
     let out = Path::new(&std::env::var("OUT_DIR").unwrap()).join("WebView2Loader.dll");
     let home = std::env::var("CARGO_HOME").map(std::path::PathBuf::from).unwrap_or_else(|_| Path::new(&std::env::var("USERPROFILE").unwrap_or_default()).join(".cargo"));
