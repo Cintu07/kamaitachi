@@ -3,6 +3,7 @@
 //! display lists; the window thread only draws, scrolls and handles input, and sleeps
 //! when nothing moves.
 
+pub mod brush;
 pub mod full;
 pub mod gpu;
 pub mod image;

@@ -123,6 +123,11 @@ impl Soft {
         Ok(Image { px: std::sync::Arc::new(px), w, h })
     }
 
+    /// The frame itself, for the brush to draw on.
+    pub fn pixels(&mut self) -> (&mut [u32], u32, u32) {
+        (&mut self.buf, self.w, self.h)
+    }
+
     pub fn begin(&mut self, clear: [u8; 4]) {
         self.clear = ((clear[0] as u32) << 16) | ((clear[1] as u32) << 8) | clear[2] as u32;
         let c = self.clear;

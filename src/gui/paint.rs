@@ -1,6 +1,7 @@
 //! One drawing interface over two backends: the cpu renderer (the default; no gpu
 //! driver loaded) and Direct3D 11 (images and glyphs live in gpu memory).
 
+use super::brush::Canvas;
 use super::gpu::{Clip, Gpu};
 use super::soft::Soft;
 use windows::core::Result;
@@ -100,6 +101,18 @@ impl Painter {
         match self {
             Painter::Gpu(g) => g.glyph(face, size, id, x, y, color, clip),
             Painter::Soft(s) => s.glyph(face, size, id, x, y, color, clip),
+        }
+    }
+
+    /// The frame as pixels to draw pencil and ink on. Only the cpu renderer has one;
+    /// on Direct3D the chrome falls back to flat shapes.
+    pub fn canvas(&mut self, k: f32) -> Option<Canvas<'_>> {
+        match self {
+            Painter::Soft(s) => {
+                let (px, w, h) = s.pixels();
+                Some(Canvas::new(px, w, h, k))
+            }
+            Painter::Gpu(_) => None,
         }
     }
 
