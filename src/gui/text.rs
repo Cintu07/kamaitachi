@@ -53,6 +53,51 @@ pub fn factory() -> IDWriteFactory2 {
     F.get_or_init(|| SendFactory(unsafe { DWriteCreateFactory::<IDWriteFactory2>(DWRITE_FACTORY_TYPE_SHARED).expect("directwrite") })).0.clone()
 }
 
+/// The typewriter and the serif the chrome is set in. Both are Computer Modern
+/// Unicode, the TeX fonts, under the SIL Open Font License (assets/fonts/OFL.txt).
+pub const TYPEWRITER: &str = "CMU Typewriter Text";
+pub const SERIF: &str = "CMU Serif";
+
+/// They ship inside the exe as woff2, 92 KB for all three. DirectWrite unpacks each
+/// one into memory once, which comes to a few hundred KB.
+const OWN_FONTS: [&[u8]; 3] = [
+    include_bytes!("../../assets/fonts/cmuntt.woff2"),
+    include_bytes!("../../assets/fonts/cmuntb.woff2"),
+    include_bytes!("../../assets/fonts/cmunti.woff2"),
+];
+
+struct SendCollection(IDWriteFontCollection);
+unsafe impl Send for SendCollection {}
+unsafe impl Sync for SendCollection {}
+
+/// The fonts kamaitachi brings, as a collection of their own. None on a Windows too
+/// old to load fonts from memory (before 10 1703); the chrome then falls back.
+fn own_fonts() -> Option<IDWriteFontCollection> {
+    static C: OnceLock<Option<SendCollection>> = OnceLock::new();
+    C.get_or_init(|| unsafe { load_own_fonts() }.map(SendCollection)).as_ref().map(|c| c.0.clone())
+}
+
+unsafe fn load_own_fonts() -> Option<IDWriteFontCollection> {
+    unsafe {
+        let f: IDWriteFactory5 = factory().cast().ok()?;
+        let loader = f.CreateInMemoryFontFileLoader().ok()?;
+        f.RegisterFontFileLoader(&loader).ok()?;
+        let set = f.CreateFontSetBuilder().ok()?;
+        for data in OWN_FONTS {
+            let stream = f.UnpackFontFile(DWRITE_CONTAINER_TYPE_WOFF2, data.as_ptr().cast(), data.len() as u32).ok()?;
+            let size = stream.GetFileSize().ok()?;
+            let mut bytes = std::ptr::null_mut();
+            let mut ctx = std::ptr::null_mut();
+            stream.ReadFileFragment(&mut bytes, 0, size, &mut ctx).ok()?;
+            // with no owner object the loader keeps its own copy, so the stream can go
+            let file = loader.CreateInMemoryFontFileReference(&f, bytes, size as u32, None);
+            stream.ReleaseFileFragment(ctx);
+            set.AddFontFile(&file.ok()?).ok()?;
+        }
+        f.CreateFontCollectionFromFontSet(&set.CreateFontSet().ok()?).ok()?.cast().ok()
+    }
+}
+
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
@@ -211,6 +256,8 @@ struct FKey {
 pub struct Dw {
     f: IDWriteFactory2,
     sys: IDWriteFontCollection,
+    /// the fonts that came with kamaitachi, if this Windows could load them
+    own: Option<IDWriteFontCollection>,
     renderer: IDWriteTextRenderer,
     families: HashMap<Arc<str>, Arc<[u16]>>,
     formats: HashMap<FKey, IDWriteTextFormat>,
@@ -230,7 +277,7 @@ impl Dw {
         let mut sys = None;
         unsafe { f.GetSystemFontCollection(&mut sys, false).expect("system fonts") };
         let renderer: IDWriteTextRenderer = Recorder.into();
-        Dw { f, sys: sys.expect("system fonts"), renderer, families: HashMap::new(), formats: HashMap::new(), metrics: HashMap::new() }
+        Dw { f, sys: sys.expect("system fonts"), own: own_fonts(), renderer, families: HashMap::new(), formats: HashMap::new(), metrics: HashMap::new() }
     }
 
     fn installed(&self, name: &str) -> Option<u32> {
@@ -239,6 +286,18 @@ impl Dw {
         let mut ok = FALSE;
         unsafe { self.sys.FindFamilyName(PCWSTR(w.as_ptr()), &mut idx, &mut ok).ok()? };
         ok.as_bool().then_some(idx)
+    }
+
+    /// The collection a resolved family lives in: ours if we brought it, else the system's.
+    fn collection(&self, fam: &[u16]) -> &IDWriteFontCollection {
+        if let Some(own) = &self.own {
+            let mut idx = 0u32;
+            let mut ok = FALSE;
+            if unsafe { own.FindFamilyName(PCWSTR(fam.as_ptr()), &mut idx, &mut ok) }.is_ok() && ok.as_bool() {
+                return own;
+            }
+        }
+        &self.sys
     }
 
     /// The first family in a css font-family list that this machine has.
@@ -261,6 +320,10 @@ impl Dw {
                 _ => &[],
             };
             if cands.is_empty() {
+                if (name == TYPEWRITER || name == SERIF) && self.own.is_some() {
+                    pick = Some(name.to_string());
+                    break;
+                }
                 if !name.is_empty() && self.installed(name).is_some() {
                     pick = Some(name.to_string());
                     break;
@@ -284,7 +347,7 @@ impl Dw {
         let fam = self.family(&font.family);
         let style = if font.italic { DWRITE_FONT_STYLE_ITALIC } else { DWRITE_FONT_STYLE_NORMAL };
         let fmt = unsafe {
-            self.f.CreateTextFormat(PCWSTR(fam.as_ptr()), None, DWRITE_FONT_WEIGHT(font.weight as i32), style, DWRITE_FONT_STRETCH_NORMAL, font.size.max(0.5), windows::core::w!("en-us")).ok()?
+            self.f.CreateTextFormat(PCWSTR(fam.as_ptr()), self.collection(&fam), DWRITE_FONT_WEIGHT(font.weight as i32), style, DWRITE_FONT_STRETCH_NORMAL, font.size.max(0.5), windows::core::w!("en-us")).ok()?
         };
         self.formats.insert(key, fmt.clone());
         Some(fmt)
@@ -300,12 +363,13 @@ impl Dw {
         let m = (|| -> Option<(f32, f32)> {
             let mut idx = 0u32;
             let mut ok = FALSE;
+            let coll = self.collection(&fam);
             unsafe {
-                self.sys.FindFamilyName(PCWSTR(fam.as_ptr()), &mut idx, &mut ok).ok()?;
+                coll.FindFamilyName(PCWSTR(fam.as_ptr()), &mut idx, &mut ok).ok()?;
                 if !ok.as_bool() {
                     return None;
                 }
-                let family = self.sys.GetFontFamily(idx).ok()?;
+                let family = coll.GetFontFamily(idx).ok()?;
                 let style = if font.italic { DWRITE_FONT_STYLE_ITALIC } else { DWRITE_FONT_STYLE_NORMAL };
                 let f = family.GetFirstMatchingFont(DWRITE_FONT_WEIGHT(font.weight as i32), DWRITE_FONT_STRETCH_NORMAL, style).ok()?;
                 let mut fm = DWRITE_FONT_METRICS::default();
@@ -341,6 +405,7 @@ impl Dw {
                 if r.font.family != base.family {
                     let fam = self.family(&r.font.family);
                     let _ = layout.SetFontFamilyName(PCWSTR(fam.as_ptr()), range);
+                    let _ = layout.SetFontCollection(self.collection(&fam), range);
                 }
                 if r.font.size != base.size {
                     let _ = layout.SetFontSize(r.font.size.max(0.5), range);
