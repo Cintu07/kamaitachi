@@ -179,7 +179,7 @@ pub fn wire(ctl: &ICoreWebView2Controller, tab: u64, env: Option<ICoreWebView2En
             &ContentLoadingEventHandler::create(Box::new(move |w, _| {
                 let Some(w) = w else { return Ok(()) };
                 let Some(b) = crate::web::block::get() else { return Ok(()) };
-                let (_, css) = b.hiding(&host_of(&source(&w)));
+                let css = b.site_hiding(&host_of(&source(&w)));
                 if !css.is_empty() {
                     let js = format!("(()=>{{const s=document.createElement('style');s.textContent={};(document.head||document.documentElement).appendChild(s)}})()", json_str(&css));
                     let _ = w.ExecuteScript(&HSTRING::from(js), &ExecuteScriptCompletedHandler::create(Box::new(|_, _| Ok(()))));

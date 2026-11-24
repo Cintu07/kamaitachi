@@ -218,10 +218,7 @@ pub fn from_html(html: &str, url: Url, kind: u8) -> Doc {
     }
     // ads and trackers the page would show: hidden
     if let Some(b) = &blocker {
-        if let Some(g) = super::block::generic_sheet() {
-            sheets.push(g);
-        }
-        let (_, specific) = b.hiding(&page_host);
+        let specific = b.site_hiding(&page_host);
         if !specific.is_empty() {
             sheets.push(Arc::new(parse_sheet(&specific)));
         }

@@ -58,7 +58,7 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 [[package]]
 name = "omamori"
 version = "0.1.0"
-source = "git+https://github.com/Cintu07/omamori?branch=main#c75b92715c3a76afe40c25be54a27c9a168d4aad"
+source = "git+https://github.com/Cintu07/omamori?branch=main#014c943e70dde06a2c2c39b599da813e4d966df0"
 
 [[package]]
 name = "once_cell"
