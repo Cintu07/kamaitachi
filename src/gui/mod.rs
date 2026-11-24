@@ -7,6 +7,8 @@ pub mod full;
 pub mod gpu;
 pub mod image;
 pub mod paint;
+pub mod play;
+pub mod skin;
 pub mod soft;
 pub mod text;
 
@@ -19,6 +21,8 @@ use crate::web::{DisplayList, Font, Item, Para, Rect, Rgba, Run, TextEngine};
 use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2, ICoreWebView2Controller, ICoreWebView2Environment};
 use gpu::Clip;
 use paint::Painter;
+use play::Stats;
+use skin::sk;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -41,17 +45,6 @@ const BAR_H: f32 = 46.0;
 const TOP: f32 = TAB_H + BAR_H;
 const START: &str = "hayate:start";
 
-// late-90s hardware, quietly: ink, a warm panel, amber phosphor, one orange, one cyan
-const BG: Rgba = [0x08, 0x08, 0x0b, 255];
-const PANEL: Rgba = [0x11, 0x11, 0x15, 255];
-const HOVER: Rgba = [0x22, 0x21, 0x26, 255];
-const TEXT: Rgba = [0xec, 0xeb, 0xe6, 255];
-const MUTED: Rgba = [0x8b, 0x8a, 0x85, 255];
-const FAINT: Rgba = [0x4f, 0x4e, 0x4b, 255];
-const ACCENT: Rgba = [0xff, 0x6b, 0x1a, 255];
-const PHOS: Rgba = [0xff, 0xc8, 0x8f, 255];
-const PHOS_DIM: Rgba = [0x8f, 0x72, 0x56, 255];
-const CYAN: Rgba = [0x6f, 0xe3, 0xff, 255];
 const MONO: &str = "Cascadia Mono, Consolas, monospace";
 /// the browser's name: kamaitachi, the sickle-weasel that rides whirlwinds
 const BRAND: &str = "kamaitachi";
@@ -59,6 +52,7 @@ const UI_FONT: &str = "Segoe UI Variable Text, Segoe UI, sans-serif";
 const ICON_FONT: &str = "Segoe Fluent Icons, Segoe MDL2 Assets";
 
 const START_HTML: &str = include_str!("start.html");
+const DEN: &str = "https://kamaitachi.local/den";
 
 pub struct Page {
     doc: load::Doc,
@@ -141,6 +135,7 @@ enum Hit {
     Reload,
     Addr,
     Engine,
+    Spirit,
 }
 
 #[derive(Default)]
@@ -180,6 +175,14 @@ struct App {
     /// per-site engine choices: true for the full engine
     engines: HashMap<String, bool>,
     full_mb: f32,
+    /// lifetime counts, stamps and the spirit's growth
+    stats: Stats,
+    /// a stamp just earned, shown for a few seconds
+    toast: Option<(String, Instant)>,
+    /// when the spirit last ate something, for its chewing animation
+    ate: Option<Instant>,
+    /// stat changes since the last save
+    unsaved: u32,
     /// the new tab's wallpaper, decoded at the window's size while the new tab is shown
     wall: Option<(u32, u32, paint::Image)>,
     wall_checked: bool,
@@ -254,7 +257,7 @@ pub fn run(urls: Vec<String>) -> Result<(), String> {
         let hwnd = CreateWindowExW(ex, class, w!("kamaitachi"), WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT, 100, 100, None, None, Some(inst.into()), None).map_err(|e| e.to_string())?;
         let dark: BOOL = TRUE;
         let _ = DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark as *const BOOL as *const _, 4);
-        let cap = COLORREF((BG[0] as u32) | (BG[1] as u32) << 8 | (BG[2] as u32) << 16);
+        let cap = COLORREF((sk().strip[0] as u32) | (sk().strip[1] as u32) << 8 | (sk().strip[2] as u32) << 16);
         let _ = DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &cap as *const COLORREF as *const _, 4);
         let memlog = std::env::var("HAYATE_MEMLOG").is_ok();
         if memlog {
@@ -301,9 +304,15 @@ pub fn run(urls: Vec<String>) -> Result<(), String> {
             full_mb: 0.0,
             wall: None,
             wall_checked: false,
+            stats: Stats::default(),
+            toast: None,
+            ate: None,
+            unsaved: 0,
         });
         APP = Box::into_raw(app);
         let app = &mut *APP;
+        app.stats = Stats::load();
+        skin::load(app.stats.blocked);
         app.sync_size();
         app.new_tab(url.as_deref().unwrap_or(START));
         for u in urls.iter().skip(1) {
@@ -361,6 +370,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         let app = &mut *APP;
         match msg {
             WM_DESTROY => {
+                app.stats.save();
                 PostQuitMessage(0);
                 LRESULT(0)
             }
@@ -382,6 +392,23 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 LRESULT(0)
             }
             WM_TIMER => {
+                if wp.0 == 3 {
+                    // the spirit chewing, a few frames and then quiet again
+                    if app.ate.is_none_or(|t| t.elapsed().as_millis() > 420) {
+                        app.ate = None;
+                        let _ = KillTimer(Some(hwnd), 3);
+                    }
+                    app.render();
+                    return LRESULT(0);
+                }
+                if wp.0 == 4 {
+                    if app.toast.as_ref().is_none_or(|t| t.1.elapsed().as_secs() >= 4) {
+                        app.toast = None;
+                        let _ = KillTimer(Some(hwnd), 4);
+                    }
+                    app.render();
+                    return LRESULT(0);
+                }
                 if wp.0 == 2 {
                     app.measure_full();
                     return LRESULT(0);
@@ -429,7 +456,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             }
             WM_SETCURSOR => {
                 if (lp.0 & 0xFFFF) as u32 == HTCLIENT {
-                    let c = if app.hover_link.is_some() || matches!(app.hover, Hit::Tab(_) | Hit::Close(_) | Hit::NewTab | Hit::Back | Hit::Fwd | Hit::Reload | Hit::Engine) {
+                    let c = if app.hover_link.is_some() || matches!(app.hover, Hit::Tab(_) | Hit::Close(_) | Hit::NewTab | Hit::Back | Hit::Fwd | Hit::Reload | Hit::Engine | Hit::Spirit) {
                         IDC_HAND
                     } else if app.hover == Hit::Addr {
                         IDC_IBEAM
@@ -632,6 +659,121 @@ fn decode_images(jobs: &[(u32, (f32, f32))], bytes: &[Option<Vec<u8>>], dpr: f32
     out.into_inner().unwrap_or_default()
 }
 
+fn hex(c: Rgba) -> String {
+    format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
+}
+
+/// The den page, written in the current skin's colors.
+fn den_html(st: &Stats) -> String {
+    let s = sk();
+    let (form, name, next) = play::form(st.blocked);
+    let grows = match next {
+        Some(n) => format!("{} more and it grows into a {}", n - st.blocked, play::FORMS[form + 1].0),
+        None => "as big as it gets".to_string(),
+    };
+    let pct = match next {
+        Some(n) => {
+            let lo = play::FORMS[form].1;
+            ((st.blocked - lo) as f64 / (n - lo) as f64 * 100.0).clamp(2.0, 100.0)
+        }
+        None => 100.0,
+    };
+    let mut stamps = String::new();
+    for p in &play::STAMPS {
+        let got = st.has(p.id);
+        stamps.push_str(&format!(
+            r#"<div class="stamp{}"><div class="seal"><b>{}</b></div><p><b>{}</b><i>{}</i></p></div>"#,
+            if got { " got" } else { "" },
+            p.title.split_whitespace().map(|w| w.chars().next().unwrap_or(' ')).collect::<String>().to_uppercase(),
+            p.title,
+            if got { p.what.to_string() } else { "not yet".to_string() }
+        ));
+    }
+    let mut skins = String::new();
+    for k in skin::ALL {
+        let open = k.unlock_at <= st.blocked;
+        let on = k.name == s.name;
+        let label = if on {
+            "wearing".to_string()
+        } else if open {
+            "wear".to_string()
+        } else {
+            format!("at {} cut", k.unlock_at)
+        };
+        let swatch = format!(r#"<span class="sw" style="background:{};border-color:{}"></span><span class="sw" style="background:{};border-color:{}"></span>"#, hex(k.panel), hex(k.faint), hex(k.accent), hex(k.faint));
+        if open && !on {
+            skins.push_str(&format!(r#"<a class="skin" href="https://kamaitachi.local/skin/{}">{}<b>{}</b><i>{}</i></a>"#, k.name, swatch, k.name, label));
+        } else {
+            skins.push_str(&format!(r#"<div class="skin{}">{}<b>{}</b><i>{}</i></div>"#, if on { " on" } else { " shut" }, swatch, k.name, label));
+        }
+    }
+    format!(
+        r#"<html><head><title>Den</title><style>
+html {{ background: {bg}; color: {text}; font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif; }}
+body {{ margin: 0; }}
+main {{ max-width: 860px; margin: 0 auto; padding: 56px 32px 80px; }}
+.tag {{ font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; color: {faint}; }}
+h1 {{ font-size: 34px; font-weight: 650; margin: 10px 0 4px; }}
+.sub {{ color: {muted}; font-size: 15px; margin: 0; }}
+.bar {{ height: 8px; background: {key}; border-radius: 4px; margin: 18px 0 6px; }}
+.bar i {{ display: block; height: 8px; width: {pct:.0}%; background: {accent}; border-radius: 4px; }}
+.small {{ font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; color: {faint}; margin: 0; }}
+.counts {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 30px 0 40px; }}
+.c {{ background: {panel}; border: 1px solid {line}; border-radius: 8px; padding: 14px 16px; }}
+.c i {{ display: block; font-style: normal; font-family: "Cascadia Mono", Consolas, monospace; font-size: 10px; color: {faint}; }}
+.c b {{ display: block; font-size: 24px; font-weight: 650; color: {ink}; margin-top: 6px; }}
+h2 {{ font-size: 13px; font-family: "Cascadia Mono", Consolas, monospace; font-weight: 600; color: {muted}; margin: 0 0 14px; }}
+.book {{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 42px; }}
+.stamp {{ text-align: center; }}
+.seal {{ width: 64px; height: 64px; margin: 0 auto; border-radius: 50%; border: 2px solid {line}; display: flex; align-items: center; justify-content: center; }}
+.seal b {{ font-family: "Cascadia Mono", Consolas, monospace; font-size: 15px; color: {faint}; }}
+.got .seal {{ border: 3px solid #c8392e; background: rgba(200, 57, 46, 0.08); }}
+.got .seal b {{ color: #c8392e; }}
+.stamp p {{ margin: 8px 0 0; }}
+.stamp p b {{ display: block; font-size: 12.5px; font-weight: 600; }}
+.stamp p i {{ display: block; font-style: normal; font-size: 11px; color: {faint}; margin-top: 2px; }}
+.skins {{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }}
+.skin {{ display: block; background: {panel}; border: 1px solid {line}; border-radius: 8px; padding: 12px 14px; color: {text}; text-decoration: none; }}
+.skin.on {{ border-color: {accent}; }}
+.skin.shut {{ opacity: 0.55; }}
+.sw {{ display: inline-block; width: 14px; height: 14px; border-radius: 4px; border: 1px solid {line}; margin-right: 4px; }}
+.skin b {{ display: block; font-size: 13px; font-weight: 600; margin-top: 8px; }}
+.skin i {{ display: block; font-style: normal; font-family: "Cascadia Mono", Consolas, monospace; font-size: 10px; color: {faint}; margin-top: 2px; }}
+</style></head><body><main>
+<div class="tag">// THE DEN</div>
+<h1>Your kamaitachi is a {name}.</h1>
+<p class="sub">It has cut down {blocked} ads and trackers. {grows}.</p>
+<div class="bar"><i></i></div>
+<p class="small">pup · blade at 100 · gale at 1,000 · whirlwind at 10,000 · three-tail at 100,000</p>
+<div class="counts">
+<div class="c"><i>CUT DOWN</i><b>{blocked}</b></div>
+<div class="c"><i>THREATS STOPPED</i><b>{threats}</b></div>
+<div class="c"><i>PAGES WITHOUT CHROMIUM</i><b>{lite}</b></div>
+<div class="c"><i>DAYS TOGETHER</i><b>{days}</b></div>
+</div>
+<h2>// STAMP BOOK · {got} OF {all}</h2>
+<div class="book">{stamps}</div>
+<h2>// SKINS · CTRL+SHIFT+K TO CYCLE</h2>
+<div class="skins">{skins}</div>
+</main></body></html>"#,
+        bg = hex(s.panel),
+        text = hex(s.text),
+        muted = hex(s.muted),
+        faint = hex(s.faint),
+        key = hex(s.key),
+        accent = hex(s.accent),
+        panel = hex(s.field),
+        line = hex(s.hover),
+        ink = hex(s.ink),
+        blocked = st.blocked,
+        threats = st.threats,
+        lite = st.lite_pages,
+        days = st.days,
+        got = st.stamps.len(),
+        all = play::STAMPS.len(),
+    )
+}
+
 fn danger_html(url: &str) -> String {
     let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('"', "&quot;");
     let host = url.split("://").nth(1).unwrap_or(url).split('/').next().unwrap_or("").to_string();
@@ -761,6 +903,50 @@ impl App {
         self.update_views();
     }
 
+    /// Applies a change to the counts, hands out any stamps it earned, and saves now
+    /// and then.
+    fn bump(&mut self, f: impl FnOnce(&mut Stats)) {
+        f(&mut self.stats);
+        self.unsaved += 1;
+        let new = self.stats.award();
+        if let Some(st) = new.last() {
+            self.toast = Some((format!("NEW STAMP · {}", st.title), Instant::now()));
+            unsafe {
+                SetTimer(Some(self.hwnd), 4, 500, None);
+            }
+        }
+        if !new.is_empty() || self.unsaved >= 40 {
+            self.stats.save();
+            self.unsaved = 0;
+        }
+    }
+
+    /// The spirit eats whatever was just blocked.
+    fn chew(&mut self) {
+        self.ate = Some(Instant::now());
+        unsafe {
+            SetTimer(Some(self.hwnd), 3, 70, None);
+        }
+    }
+
+    /// The den: the spirit, every count, the stamp book and the skins.
+    fn show_den(&mut self, i: usize, push: bool) {
+        if let Some(f) = self.tabs[i].full.take() {
+            unsafe {
+                let _ = f.ctl.Close();
+            }
+        }
+        let t = &mut self.tabs[i];
+        if push && !t.url.is_empty() && t.url != DEN {
+            t.back.push((t.url.clone(), t.scroll));
+            t.fwd.clear();
+        }
+        t.full_mode = false;
+        t.url = DEN.into();
+        let html = den_html(&self.stats);
+        self.show_html(i, &html, "Den");
+    }
+
     /// Puts a warning page in tab `i` in place of a flagged site.
     fn show_danger(&mut self, i: usize, url: String, push: bool) {
         if let Some(f) = self.tabs[i].full.take() {
@@ -777,6 +963,7 @@ impl App {
         t.pending = None;
         t.seq += 1;
         t.url = url.clone();
+        self.bump(|s| s.threats += 1);
         self.show_html(i, &danger_html(&url), "Stopped: dangerous site");
         self.update_views();
     }
@@ -796,6 +983,12 @@ impl App {
         t.scroll = 0.0;
         t.target = 0.0;
         self.update_title();
+        if let Some((_, n)) = &mut self.shot {
+            *n = 1;
+            unsafe {
+                let _ = PostMessageW(Some(self.hwnd), WM_APP, WPARAM(0), LPARAM(0));
+            }
+        }
     }
 
     fn wants_full(&self, url: &str) -> bool {
@@ -902,6 +1095,8 @@ impl App {
         t.full_mode = true;
         t.seq += 1;
         t.blocked = 0;
+        self.stats.full_pages += 1;
+        let t = &mut self.tabs[i];
         t.url = url.clone();
         t.title = host_of(&url).trim_start_matches("www.").to_string();
         t.dl = None;
@@ -1041,6 +1236,8 @@ impl App {
                     if let Some(t) = self.tabs.iter_mut().find(|t| t.id == tab) {
                         t.blocked += 1;
                     }
+                    self.bump(|s| s.blocked += 1);
+                    self.chew();
                 }
                 full::Ev::Picture { tab, jpeg } => {
                     if let Some(t) = self.tabs.iter_mut().find(|t| t.id == tab) {
@@ -1080,6 +1277,7 @@ impl App {
             return;
         }
         let want_full = !self.tabs[c].full_mode;
+        self.bump(|s| s.switches += 1);
         self.engines.insert(host_of(&url), want_full);
         self.save_engines();
         self.load(c, url, false);
@@ -1088,6 +1286,17 @@ impl App {
     /// Starts loading `url` into tab `i`; `push` records the old page in history.
     fn load(&mut self, i: usize, url: String, push: bool) {
         if let Some(rest) = url.strip_prefix("https://kamaitachi.local/") {
+            if rest == "den" {
+                return self.show_den(i, push);
+            }
+            if let Some(name) = rest.strip_prefix("skin/") {
+                if let Some(s) = skin::by_name(name).filter(|s| s.unlock_at <= self.stats.blocked) {
+                    skin::wear(s);
+                    self.wall = None;
+                    self.wall_checked = false;
+                }
+                return self.show_den(i, false);
+            }
             if let Some(q) = rest.strip_prefix("proceed?u=") {
                 let target = crate::url::percent_decode(q);
                 crate::web::block::allow(&host_of(&target));
@@ -1260,6 +1469,13 @@ impl App {
                             private_mb()
                         );
                     }
+                    self.bump(|s| {
+                        s.lite_pages += 1;
+                        s.blocked += blocked as u64;
+                    });
+                    if blocked > 0 {
+                        self.chew();
+                    }
                     let t = &mut self.tabs[i];
                     t.blocked = blocked;
                     t.tex = tex;
@@ -1423,6 +1639,20 @@ impl App {
             match vk {
                 VK_L => self.focus_addr(),
                 VK_E if shift => self.toggle_engine(),
+                VK_K if shift => {
+                    let s = skin::next(self.stats.blocked);
+                    skin::wear(s);
+                    self.wall = None;
+                    self.wall_checked = false;
+                    self.toast = Some((format!("SKIN · {}", s.name), Instant::now()));
+                    unsafe {
+                        SetTimer(Some(self.hwnd), 4, 500, None);
+                    }
+                    if self.tab().url == DEN {
+                        let c = self.cur;
+                        self.show_den(c, false);
+                    }
+                }
                 VK_T => {
                     self.new_tab(START);
                     self.focus_addr();
@@ -1575,6 +1805,10 @@ impl App {
                 self.update_views();
             }
             Hit::Engine => self.toggle_engine(),
+            Hit::Spirit => {
+                let c = self.cur;
+                self.show_den(c, true);
+            }
             Hit::Close(i) => self.close_tab(i),
             Hit::NewTab => {
                 self.new_tab(START);
@@ -1665,8 +1899,8 @@ impl App {
             t.scroll = if d.abs() < 0.5 { t.target } else { t.scroll + d * 0.28 };
         }
         let bg = if self.tab().url == START {
-            BG
-        } else if self.tab().full_mode { [0xff, 0xff, 0xff, 255] } else { self.tab().dl.as_ref().map_or(BG, |d| d.bg) };
+            sk().strip
+        } else if self.tab().full_mode { [0xff, 0xff, 0xff, 255] } else { self.tab().dl.as_ref().map_or(sk().strip, |d| d.bg) };
         self.gpu.begin(bg);
         self.draw_page();
         self.draw_chrome();
@@ -1676,8 +1910,10 @@ impl App {
                 *n += 1;
             }
             // a couple of frames so late glyphs are in the atlas
+            let wait = std::env::var("HAYATE_SHOT_WAIT_MS").ok().and_then(|v| v.parse::<u128>().ok()).unwrap_or(0);
             if let Some((p, n)) = &self.shot
                 && *n >= 3
+                && self.started.elapsed().as_millis() >= wait
             {
                 let p = p.clone();
                 let _ = self.gpu.draw();
@@ -1726,7 +1962,7 @@ impl App {
                 let msg = if self.env_state == 1 || self.env_state == 0 { "Starting the full engine" } else { "Opening" };
                 let k = self.scale;
                 let (cw, ch) = (self.w as f32 / k, self.h as f32 / k);
-                self.label(msg, cw / 2.0 - 70.0, TOP + (ch - TOP) / 2.0 - 10.0, 14.0, 400, MUTED, 300.0, UI_FONT);
+                self.label(msg, cw / 2.0 - 70.0, TOP + (ch - TOP) / 2.0 - 10.0, 14.0, 400, sk().muted, 300.0, UI_FONT);
             }
             return;
         }
@@ -1805,6 +2041,7 @@ impl App {
             let _ = std::fs::remove_file(wall_dir().join(format!("wallpaper.{e}")));
         }
         if std::fs::copy(path, wall_dir().join(format!("wallpaper.{ext}"))).is_ok() {
+            self.bump(|s| s.own_wallpaper = true);
             self.wall = None;
             self.wall_checked = false;
             if self.tab().url != START {
@@ -1841,6 +2078,122 @@ impl App {
     /// The new-tab scene, drawn from shapes every frame and kept nowhere: a night sky,
     /// a striped vermilion sun, a snow-capped peak, hills, and seigaiha waves.
     fn draw_scene(&mut self) {
+        if sk().light {
+            self.draw_sky();
+            self.draw_season();
+            return;
+        }
+        self.draw_scene_dark();
+        self.draw_season();
+    }
+
+    /// joseon's new tab: a pale sky going to ivory, soft clouds and faint ridges, like
+    /// a watercolor on hanji paper.
+    fn draw_sky(&mut self) {
+        let k = self.scale;
+        let top = TOP * k;
+        let (w, h) = (self.w as f32, self.h as f32);
+        let hh = h - top;
+        let view: Clip = [0.0, top, w, h];
+        let stops: [(f32, Rgba); 4] = [(0.0, [0x9c, 0xc9, 0xea, 255]), (0.38, [0xcd, 0xe4, 0xf3, 255]), (0.66, [0xee, 0xf3, 0xf3, 255]), (1.0, [0xfb, 0xf7, 0xef, 255])];
+        let color_at = |t: f32| -> Rgba {
+            for p in stops.windows(2) {
+                if t >= p[0].0 && t <= p[1].0 {
+                    let f = (t - p[0].0) / (p[1].0 - p[0].0);
+                    return [0, 1, 2, 3].map(|i| (p[0].1[i] as f32 + (p[1].1[i] as f32 - p[0].1[i] as f32) * f) as u8);
+                }
+            }
+            stops[3].1
+        };
+        let g = &mut self.gpu;
+        let n = (hh / 3.0).ceil() as i32;
+        for i in 0..n {
+            let y = top + (i * 3) as f32;
+            g.rect(0.0, y, w, 3.0, color_at(i as f32 / n as f32), 0.0, view);
+        }
+        // a pale sun, mostly glow
+        let (sx, sy, r) = (w * 0.76, top + hh * 0.2, hh * 0.06);
+        for (grow, a) in [(4.0f32, 10u8), (3.0, 16), (2.2, 26), (1.6, 44)] {
+            let rr = r * grow;
+            g.rect(sx - rr, sy - rr, rr * 2.0, rr * 2.0, [255, 253, 245, a], rr, view);
+        }
+        g.rect(sx - r, sy - r, r * 2.0, r * 2.0, [255, 252, 240, 235], r, view);
+        // clouds: puffs of white placed by a fixed hash so they never move
+        let mut seed = 0x2545_f491u32;
+        let mut rnd = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            (seed % 10_000) as f32 / 10_000.0
+        };
+        for _ in 0..6 {
+            let (cx, cy) = (rnd() * w, top + hh * (0.12 + rnd() * 0.32));
+            let size = hh * (0.035 + rnd() * 0.03);
+            for j in 0..7 {
+                let jx = cx + (j as f32 - 3.0) * size * 0.9 + rnd() * size * 0.5;
+                let jy = cy - (3.0 - (j as f32 - 3.0).abs()) * size * 0.35 + rnd() * size * 0.3;
+                let jr = size * (0.8 + rnd() * 0.7);
+                g.rect(jx - jr, jy - jr, jr * 2.0, jr * 2.0, [255, 255, 255, 120], jr, view);
+            }
+        }
+        // three ridges, fainter as they go back, then mist
+        for (i, (base, amp, col)) in [(0.58f32, 0.06f32, [0xa9, 0xc0, 0xd4, 150u8]), (0.66, 0.05, [0xbf, 0xd0, 0xdd, 170]), (0.74, 0.04, [0xdc, 0xe4, 0xe6, 200])].into_iter().enumerate() {
+            let step = (2.0 * k).max(2.0);
+            let mut x = 0.0;
+            while x < w {
+                let t = x / k;
+                let y = top + hh * base + hh * amp * ((t * 0.005 + i as f32 * 1.7).sin() * 0.6 + (t * 0.013 + i as f32 * 0.6).sin() * 0.4);
+                g.rect(x, y, step, h - y, col, 0.0, view);
+                x += step;
+            }
+        }
+        let from = top + hh * 0.72;
+        let m = ((h - from) / 3.0).ceil() as i32;
+        for i in 0..m {
+            let a = (i as f32 / m as f32 * 235.0) as u8;
+            g.rect(0.0, from + (i * 3) as f32, w, 3.0, [0xfb, 0xf8, 0xf1, a], 0.0, view);
+        }
+    }
+
+    /// Something falling for the time of year: petals in spring, fireflies in summer,
+    /// leaves in autumn, snow in winter. It does not move, so it costs no frames.
+    fn draw_season(&mut self) {
+        let k = self.scale;
+        let top = TOP * k;
+        let (w, h) = (self.w as f32, self.h as f32);
+        let view: Clip = [0.0, top, w, h];
+        let mut st = windows_sys::Win32::Foundation::SYSTEMTIME { wYear: 0, wMonth: 0, wDayOfWeek: 0, wDay: 0, wHour: 0, wMinute: 0, wSecond: 0, wMilliseconds: 0 };
+        unsafe { windows_sys::Win32::System::SystemInformation::GetLocalTime(&mut st) };
+        let light = sk().light;
+        let mut seed = 0x6c07_8965u32 ^ st.wMonth as u32;
+        let mut rnd = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            (seed % 10_000) as f32 / 10_000.0
+        };
+        let g = &mut self.gpu;
+        for _ in 0..46 {
+            let (x, y, s) = (rnd() * w, top + rnd() * (h - top), (3.0 + rnd() * 4.0) * k);
+            match st.wMonth {
+                3..=5 => g.rect(x, y, s * 1.6, s, [0xf4, 0xb6, 0xc8, 200], s * 0.5, view),
+                6..=8 => {
+                    g.rect(x - s, y - s, s * 2.0, s * 2.0, [0xe8, 0xf0, 0x6a, 40], s, view);
+                    g.rect(x - 1.5 * k, y - 1.5 * k, 3.0 * k, 3.0 * k, [0xf4, 0xff, 0x9a, 230], 1.5 * k, view);
+                }
+                9..=11 => {
+                    let c: Rgba = if rnd() > 0.5 { [0xd9, 0x5b, 0x2e, 210] } else { [0xe8, 0x93, 0x3a, 210] };
+                    g.rect(x, y, s * 1.4, s * 1.4, c, s * 0.35, view);
+                }
+                _ => {
+                    let c: Rgba = if light { [0xff, 0xff, 0xff, 230] } else { [0xf0, 0xf4, 0xff, 200] };
+                    g.rect(x, y, s * 0.8, s * 0.8, c, s * 0.4, view);
+                }
+            }
+        }
+    }
+
+    fn draw_scene_dark(&mut self) {
         if let Some(img) = self.wallpaper() {
             let k = self.scale;
             let top = TOP * k;
@@ -1967,9 +2320,60 @@ impl App {
         g.rect(0.0, band - 1.0 * k, w, 1.0 * k, [0xff, 0x6b, 0x1a, 60], 0.0, view);
     }
 
+    /// The spirit, drawn from its pixel map at the right end of the tab strip. It grows
+    /// tails and blades as the blocked count climbs, and chews while it eats.
+    fn draw_spirit(&mut self, w: f32) {
+        let (form, _, _) = play::form(self.stats.blocked);
+        let px = 2.0;
+        let x0 = w - 46.0;
+        let y0 = 11.0;
+        let fur = sk().ink;
+        let eating = self.ate.is_some_and(|t| (t.elapsed().as_millis() / 90) % 2 == 0);
+        let r = Rect::new(x0 - 10.0, 5.0, 50.0, TAB_H - 8.0);
+        if self.hover == Hit::Spirit {
+            self.rect(r, sk().hover, 6.0);
+        }
+        self.hits.push((r, Hit::Spirit));
+        for (row, line) in play::SPRITE.iter().enumerate() {
+            for (col, ch) in line.bytes().enumerate() {
+                let c = match ch {
+                    b'#' => fur,
+                    b'o' => sk().panel,
+                    b'm' if eating => sk().panel,
+                    b'm' => fur,
+                    _ => continue,
+                };
+                self.rect(Rect::new(x0 + col as f32 * px, y0 + row as f32 * px, px, px), c, 0.0);
+            }
+        }
+        // extra tails for the bigger forms, then a blade on the tip of each
+        let tails = [0, 1, 1, 2, 3][form];
+        for t in 0..tails {
+            let line = play::TAIL[t];
+            let dy = (5 - t as i32 * 2) as f32;
+            for (col, ch) in line.bytes().enumerate() {
+                if ch == b'#' {
+                    self.rect(Rect::new(x0 - 6.0 * px + col as f32 * px, y0 + dy * px, px, px), fur, 0.0);
+                }
+            }
+            if form >= 1 {
+                self.rect(Rect::new(x0 - 8.0 * px, y0 + (dy - 1.0) * px, px * 2.0, px), sk().accent, 0.0);
+            }
+        }
+        if form >= 3 {
+            let ac = sk().accent;
+            let k = self.scale;
+            self.gpu.ring((x0 + 4.0) * k, (y0 - 4.0) * k, 30.0 * k, 26.0 * k, 1.0 * k, [ac[0], ac[1], ac[2], 90], 13.0 * k, gpu::NO_CLIP);
+        }
+        if eating {
+            // a crumb of whatever it caught
+            self.rect(Rect::new(x0 + 16.0 * px, y0 + 2.0 * px, px, px), [0xd9, 0x5b, 0x2e, 255], 0.0);
+        }
+    }
+
     /// A 1px bevel: light on top and dark below when raised, the other way when inset.
     fn bevel(&mut self, r: Rect, raised: bool) {
-        let (hi, lo): (Rgba, Rgba) = ([255, 255, 255, 18], [0, 0, 0, 170]);
+        let (hi, lo): (Rgba, Rgba) = (sk().bevel_hi, sk().bevel_lo);
         let (top, bot) = if raised { (hi, lo) } else { (lo, hi) };
         self.rect(Rect::new(r.x + 3.0, r.y, r.w - 6.0, 1.0), top, 0.0);
         self.rect(Rect::new(r.x + 3.0, r.y + r.h - 1.0, r.w - 6.0, 1.0), bot, 0.0);
@@ -1982,7 +2386,7 @@ impl App {
                 self.rect(Rect::new(cx - k, cy - k, 2.0 * k, 2.0 * k), [c[0], c[1], c[2], a], k);
             }
         }
-        let core = if on { c } else { [0x34, 0x33, 0x36, 255] };
+        let core = if on { c } else { sk().led_off };
         self.rect(Rect::new(cx - 2.5, cy - 2.5, 5.0, 5.0), core, 2.5);
         if on {
             self.rect(Rect::new(cx - 1.0, cy - 1.8, 1.6, 1.2), [255, 255, 255, 150], 0.6);
@@ -1991,7 +2395,7 @@ impl App {
 
     /// A square key, raised; lit when hovered.
     fn key_cap(&mut self, r: Rect, hover: bool) {
-        self.rect(r, if hover { [0x22, 0x21, 0x26, 255] } else { [0x17, 0x17, 0x1c, 255] }, 5.0);
+        self.rect(r, if hover { sk().key_hover } else { sk().key }, 5.0);
         self.bevel(r, true);
     }
 
@@ -2001,38 +2405,43 @@ impl App {
         let h = self.h as f32 / k;
         self.hits.clear();
         // the panel, with faint scanlines across it
-        self.rect(Rect::new(0.0, 0.0, w, TAB_H), BG, 0.0);
-        self.rect(Rect::new(0.0, TAB_H, w, BAR_H), PANEL, 0.0);
-        let mut y = 1.0;
-        while y < TOP - 2.0 {
-            self.rect(Rect::new(0.0, y, w, 1.0), [255, 255, 255, 4], 0.0);
-            y += 3.0;
+        self.rect(Rect::new(0.0, 0.0, w, TAB_H), sk().strip, 0.0);
+        self.rect(Rect::new(0.0, TAB_H, w, BAR_H), sk().panel, 0.0);
+        let scan = sk().scan;
+        if scan > 0 {
+            let c: Rgba = if sk().light { [0x30, 0x40, 0x20, scan] } else { [255, 255, 255, scan] };
+            let mut y = 1.0;
+            while y < TOP - 2.0 {
+                self.rect(Rect::new(0.0, y, w, 1.0), c, 0.0);
+                y += 3.0;
+            }
         }
-        self.rect(Rect::new(0.0, TOP - 2.0, w, 1.0), [255, 255, 255, 8], 0.0);
-        self.rect(Rect::new(0.0, TOP - 1.0, w, 1.0), [0, 0, 0, 255], 0.0);
+        self.rect(Rect::new(0.0, TOP - 2.0, w, 1.0), sk().bevel_hi, 0.0);
+        self.rect(Rect::new(0.0, TOP - 1.0, w, 1.0), if sk().light { [0xd8, 0xcc, 0xb6, 255] } else { [0, 0, 0, 255] }, 0.0);
         // the badge
         let badge = Rect::new(10.0, 8.0, 26.0, 26.0);
-        self.rect(badge, ACCENT, 5.0);
+        self.rect(badge, sk().accent, 5.0);
         self.bevel(badge, true);
         // a blade cut, in pixels
         for i in 0..8 {
             let f = i as f32;
-            self.rect(Rect::new(badge.x + 6.0 + f * 2.0, badge.y + 19.0 - f * 2.0, 3.0, 3.0), BG, 0.0);
+            self.rect(Rect::new(badge.x + 6.0 + f * 2.0, badge.y + 19.0 - f * 2.0, 3.0, 3.0), sk().panel, 0.0);
         }
         // tabs, numbered like slots
         let n = self.tabs.len();
         let x0 = 44.0;
-        let tw = ((w - x0 - 44.0) / n as f32).clamp(70.0, 236.0);
+        // room on the right for the spirit
+        let tw = ((w - x0 - 44.0 - 64.0) / n as f32).clamp(70.0, 236.0);
         for i in 0..n {
             let x = x0 + i as f32 * tw;
             let r = Rect::new(x, 7.0, tw - 6.0, TAB_H - 7.0);
             let active = i == self.cur;
             let hov = self.hover == Hit::Tab(i) || self.hover == Hit::Close(i);
             if active {
-                self.rect(Rect::new(r.x, r.y, r.w, r.h + 8.0), PANEL, 6.0);
-                self.rect(Rect::new(r.x + 5.0, r.y, r.w - 10.0, 1.0), [255, 255, 255, 26], 0.0);
+                self.rect(Rect::new(r.x, r.y, r.w, r.h + 8.0), sk().panel, 6.0);
+                self.rect(Rect::new(r.x + 5.0, r.y, r.w - 10.0, 1.0), sk().bevel_hi, 0.0);
             } else if hov {
-                self.rect(Rect::new(r.x, r.y + 2.0, r.w, r.h - 6.0), [0x13, 0x13, 0x17, 255], 6.0);
+                self.rect(Rect::new(r.x, r.y + 2.0, r.w, r.h - 6.0), sk().hover, 6.0);
             }
             self.hits.push((r, Hit::Tab(i)));
             let (title, loading, parked, full) = {
@@ -2041,33 +2450,34 @@ impl App {
             };
             let cy = r.y + r.h / 2.0 - 1.0;
             let (lc, on) = if loading {
-                (ACCENT, true)
+                (sk().accent, true)
             } else if parked {
-                (FAINT, false)
+                (sk().faint, false)
             } else if full {
-                (CYAN, active)
+                (sk().full, active)
             } else {
-                (PHOS, active)
+                (sk().ink, active)
             };
             self.led(r.x + 13.0, cy, lc, on);
             let num = format!("{:02}", i + 1);
-            self.label(&num, r.x + 23.0, cy - 7.5, 10.5, 500, if active { PHOS_DIM } else { FAINT }, 20.0, MONO);
+            self.label(&num, r.x + 23.0, cy - 7.5, 10.5, 500, if active { sk().ink_dim } else { sk().faint }, 20.0, MONO);
             let show_close = active || hov;
             let tmax = r.w - 52.0 - if show_close { 22.0 } else { 0.0 };
-            self.label(&title, r.x + 44.0, cy - 9.0, 12.5, if active { 500 } else { 400 }, if active { TEXT } else { MUTED }, tmax.max(0.0), UI_FONT);
+            self.label(&title, r.x + 44.0, cy - 9.0, 12.5, if active { 500 } else { 400 }, if active { sk().text } else { sk().muted }, tmax.max(0.0), UI_FONT);
             if show_close && tw > 96.0 {
                 let cr = Rect::new(r.x + r.w - 27.0, cy - 10.0, 20.0, 20.0);
                 if self.hover == Hit::Close(i) {
-                    self.rect(cr, HOVER, 5.0);
+                    self.rect(cr, sk().hover, 5.0);
                 }
-                self.icon('\u{E8BB}', cr.x + 10.0, cr.y + 10.0, 8.5, MUTED);
+                self.icon('\u{E8BB}', cr.x + 10.0, cr.y + 10.0, 8.5, sk().muted);
                 self.hits.push((cr, Hit::Close(i)));
             }
         }
+        self.draw_spirit(w);
         let nr = Rect::new(x0 + n as f32 * tw + 2.0, 10.0, 24.0, 24.0);
         let nh = self.hover == Hit::NewTab;
         self.key_cap(nr, nh);
-        self.icon('\u{E710}', nr.x + 12.0, nr.y + 12.0, 11.0, if nh { TEXT } else { MUTED });
+        self.icon('\u{E710}', nr.x + 12.0, nr.y + 12.0, 11.0, if nh { sk().text } else { sk().muted });
         self.hits.push((nr, Hit::NewTab));
         // navigation keys
         let (can_back, can_fwd, loading, full_mode) = {
@@ -2081,7 +2491,7 @@ impl App {
             if hv {
                 self.key_cap(r, true);
             }
-            self.icon(glyph, r.x + 15.0, r.y + 15.0, 12.5, if !on { FAINT } else if hv { TEXT } else { MUTED });
+            self.icon(glyph, r.x + 15.0, r.y + 15.0, 12.5, if !on { sk().faint } else if hv { sk().text } else { sk().muted });
             self.hits.push((r, hit));
         }
         // right side, laid out from the edge: memory meter, then the engine switch
@@ -2095,33 +2505,33 @@ impl App {
         let lit = ((total / budget) * segs as f32).ceil().clamp(1.0, segs as f32) as usize;
         for s in 0..segs {
             let c = if s < lit {
-                if s >= segs - 2 { [0xff, 0x45, 0x3a, 255] } else if s >= segs - 4 { [0xff, 0xb0, 0x3a, 255] } else { PHOS }
+                if s >= segs - 2 { [0xff, 0x45, 0x3a, 255] } else if s >= segs - 4 { [0xff, 0xb0, 0x3a, 255] } else { sk().accent }
             } else {
-                [0x24, 0x23, 0x28, 255]
+                sk().led_off
             };
             self.rect(Rect::new(rx + s as f32 * (seg_w + 2.0), TAB_H + 15.0, seg_w, 16.0), c, 1.0);
         }
         let val = if self.full_mb > 0.5 { format!("{:.0}+{:.0}", mine, self.full_mb) } else { format!("{mine:.1}") };
-        let (_, vw) = self.ui_text(&val, 13.0, 500, MONO, PHOS);
-        let (_, mbw) = self.ui_text("MB", 9.5, 500, MONO, FAINT);
+        let (_, vw) = self.ui_text(&val, 13.0, 500, MONO, sk().ink);
+        let (_, mbw) = self.ui_text("MB", 9.5, 500, MONO, sk().faint);
         rx -= mbw + 6.0;
-        self.label("MB", rx, TAB_H + 19.5, 9.5, 500, PHOS_DIM, mbw + 2.0, MONO);
+        self.label("MB", rx, TAB_H + 19.5, 9.5, 500, sk().ink_dim, mbw + 2.0, MONO);
         rx -= vw + 4.0;
-        self.label(&val, rx, TAB_H + 15.0, 13.0, 500, PHOS, vw + 2.0, MONO);
-        let (_, memw) = self.ui_text("MEM", 9.5, 500, MONO, FAINT);
+        self.label(&val, rx, TAB_H + 15.0, 13.0, 500, sk().ink, vw + 2.0, MONO);
+        let (_, memw) = self.ui_text("MEM", 9.5, 500, MONO, sk().faint);
         rx -= memw + 8.0;
-        self.label("MEM", rx, TAB_H + 19.5, 9.5, 500, FAINT, memw + 2.0, MONO);
+        self.label("MEM", rx, TAB_H + 19.5, 9.5, 500, sk().faint, memw + 2.0, MONO);
         let on_page = !matches!(self.tab().url.as_str(), START | "");
         // what the blocker stopped here
         let blocked = self.tab().blocked;
         if on_page && blocked > 0 {
             let s = format!("{blocked}");
-            let (_, bw) = self.ui_text(&s, 12.0, 600, MONO, PHOS);
+            let (_, bw) = self.ui_text(&s, 12.0, 600, MONO, sk().ink);
             rx -= bw + 4.0;
             self.label(&s, rx, TAB_H + 16.0, 12.0, 600, [0xff, 0x8a, 0x80, 255], bw + 2.0, MONO);
-            let (_, lw) = self.ui_text("BLOCKED", 9.5, 500, MONO, FAINT);
+            let (_, lw) = self.ui_text("BLOCKED", 9.5, 500, MONO, sk().faint);
             rx -= lw + 6.0;
-            self.label("BLOCKED", rx, TAB_H + 19.5, 9.5, 500, FAINT, lw + 2.0, MONO);
+            self.label("BLOCKED", rx, TAB_H + 19.5, 9.5, 500, sk().faint, lw + 2.0, MONO);
             self.led(rx - 9.0, TAB_H + 23.0, [0xff, 0x45, 0x3a, 255], true);
             rx -= 22.0;
         }
@@ -2129,16 +2539,16 @@ impl App {
         rx -= sw_w + 16.0;
         if on_page {
             let sr = Rect::new(rx, TAB_H + 11.0, sw_w, 24.0);
-            self.rect(sr, [0x07, 0x07, 0x09, 255], 6.0);
+            self.rect(sr, sk().field, 6.0);
             self.bevel(sr, false);
             let half = sw_w / 2.0;
             let seg = if full_mode { Rect::new(sr.x + half, sr.y + 2.0, half - 2.0, 20.0) } else { Rect::new(sr.x + 2.0, sr.y + 2.0, half - 2.0, 20.0) };
-            self.rect(seg, if self.hover == Hit::Engine { [0x26, 0x25, 0x2b, 255] } else { [0x1b, 0x1b, 0x21, 255] }, 4.5);
+            self.rect(seg, if self.hover == Hit::Engine { sk().key_hover } else { sk().key }, 4.5);
             self.bevel(seg, true);
-            self.led(sr.x + 11.0, sr.y + 12.0, PHOS, !full_mode);
-            self.label("LITE", sr.x + 19.0, sr.y + 5.0, 10.5, 600, if full_mode { FAINT } else { TEXT }, 34.0, MONO);
-            self.led(sr.x + half + 10.0, sr.y + 12.0, CYAN, full_mode);
-            self.label("FULL", sr.x + half + 18.0, sr.y + 5.0, 10.5, 600, if full_mode { TEXT } else { FAINT }, 34.0, MONO);
+            self.led(sr.x + 11.0, sr.y + 12.0, sk().ink, !full_mode);
+            self.label("LITE", sr.x + 19.0, sr.y + 5.0, 10.5, 600, if full_mode { sk().faint } else { sk().text }, 34.0, MONO);
+            self.led(sr.x + half + 10.0, sr.y + 12.0, sk().full, full_mode);
+            self.label("FULL", sr.x + half + 18.0, sr.y + 5.0, 10.5, 600, if full_mode { sk().text } else { sk().faint }, 34.0, MONO);
             self.hits.push((sr, Hit::Engine));
         }
         // the address display: an inset lcd
@@ -2146,41 +2556,45 @@ impl App {
         let aw = (rx - ax - 12.0).max(80.0);
         let ar = Rect::new(ax, TAB_H + 8.0, aw, 30.0);
         let focused = self.edit.focused;
-        self.rect(ar, [0x06, 0x06, 0x08, 255], 6.0);
+        self.rect(ar, sk().field, 6.0);
         self.bevel(ar, false);
         if focused {
             for (g, a) in [(3.0f32, 26u8), (1.5, 60)] {
                 let kk = self.scale;
-                self.gpu.ring((ar.x - g) * kk, (ar.y - g) * kk, (ar.w + 2.0 * g) * kk, (ar.h + 2.0 * g) * kk, 1.0 * kk, [0xff, 0x9a, 0x4a, a], (6.0 + g) * kk, gpu::NO_CLIP);
+                let ac = sk().accent;
+                self.gpu.ring((ar.x - g) * kk, (ar.y - g) * kk, (ar.w + 2.0 * g) * kk, (ar.h + 2.0 * g) * kk, 1.0 * kk, [ac[0], ac[1], ac[2], a], (6.0 + g) * kk, gpu::NO_CLIP);
             }
             let kk = self.scale;
-            self.gpu.ring(ar.x * kk, ar.y * kk, ar.w * kk, ar.h * kk, 1.0 * kk, [0xff, 0x9a, 0x4a, 200], 6.0 * kk, gpu::NO_CLIP);
+            let ac = sk().accent;
+            self.gpu.ring(ar.x * kk, ar.y * kk, ar.w * kk, ar.h * kk, 1.0 * kk, [ac[0], ac[1], ac[2], 200], 6.0 * kk, gpu::NO_CLIP);
         } else if self.hover == Hit::Addr {
             let kk = self.scale;
-            self.gpu.ring(ar.x * kk, ar.y * kk, ar.w * kk, ar.h * kk, 1.0 * kk, [255, 255, 255, 22], 6.0 * kk, gpu::NO_CLIP);
+            self.gpu.ring(ar.x * kk, ar.y * kk, ar.w * kk, ar.h * kk, 1.0 * kk, sk().bevel_lo, 6.0 * kk, gpu::NO_CLIP);
         }
         self.hits.push((ar, Hit::Addr));
         let ty = ar.y + 7.5;
         if focused {
             let s: String = self.edit.text.iter().collect();
             let before: String = self.edit.text[..self.edit.caret].iter().collect();
-            let (_, bw) = self.ui_text(&before, 13.0, 400, MONO, TEXT);
-            let (_, all_w) = self.ui_text(&s, 13.0, 400, MONO, TEXT);
+            let (_, bw) = self.ui_text(&before, 13.0, 400, MONO, sk().text);
+            let (_, all_w) = self.ui_text(&s, 13.0, 400, MONO, sk().text);
             if self.edit.all && !s.is_empty() {
-                self.rect(Rect::new(ar.x + 13.0, ar.y + 6.0, all_w + 2.0, 18.0), [0xff, 0x8a, 0x3a, 64], 2.0);
+                let ac = sk().accent;
+                self.rect(Rect::new(ar.x + 13.0, ar.y + 6.0, all_w + 2.0, 18.0), [ac[0], ac[1], ac[2], 64], 2.0);
             }
             if s.is_empty() {
-                self.label("SEARCH OR TYPE AN ADDRESS", ar.x + 14.0, ty + 1.0, 11.5, 500, FAINT, aw - 28.0, MONO);
+                self.label("SEARCH OR TYPE AN ADDRESS", ar.x + 14.0, ty + 1.0, 11.5, 500, sk().faint, aw - 28.0, MONO);
             } else {
-                self.label(&s, ar.x + 14.0, ty, 13.0, 400, TEXT, aw - 28.0, MONO);
+                self.label(&s, ar.x + 14.0, ty, 13.0, 400, sk().text, aw - 28.0, MONO);
             }
             if !self.edit.all {
-                self.rect(Rect::new(ar.x + 14.0 + bw, ar.y + 6.0, 7.5, 18.0), [0xff, 0x9a, 0x4a, 150], 1.0);
+                let ac = sk().accent;
+                self.rect(Rect::new(ar.x + 14.0 + bw, ar.y + 6.0, 7.5, 18.0), [ac[0], ac[1], ac[2], 150], 1.0);
             }
         } else {
             let url = self.tab().url.clone();
             if url == START || url.is_empty() {
-                self.label("SEARCH OR TYPE AN ADDRESS", ar.x + 14.0, ty + 1.0, 11.5, 500, FAINT, aw - 28.0, MONO);
+                self.label("SEARCH OR TYPE AN ADDRESS", ar.x + 14.0, ty + 1.0, 11.5, 500, sk().faint, aw - 28.0, MONO);
             } else {
                 let rest = url.trim_start_matches("https://");
                 let (host, path) = match rest.find('/') {
@@ -2189,9 +2603,9 @@ impl App {
                 };
                 let host = host.trim_start_matches("www.").to_string();
                 let path = if path == "/" { String::new() } else { path.to_string() };
-                self.icon('\u{E72E}', ar.x + 16.0, ar.y + 15.0, 10.5, PHOS_DIM);
-                let hw = self.label(&host, ar.x + 30.0, ty, 13.0, 500, PHOS, aw - 44.0, MONO);
-                self.label(&path, ar.x + 30.0 + hw, ty, 13.0, 400, PHOS_DIM, (aw - 44.0 - hw).max(0.0), MONO);
+                self.icon('\u{E72E}', ar.x + 16.0, ar.y + 15.0, 10.5, sk().ink_dim);
+                let hw = self.label(&host, ar.x + 30.0, ty, 13.0, 500, sk().ink, aw - 44.0, MONO);
+                self.label(&path, ar.x + 30.0 + hw, ty, 13.0, 400, sk().ink_dim, (aw - 44.0 - hw).max(0.0), MONO);
             }
         }
         // loading: a row of lit segments under the panel
@@ -2199,19 +2613,47 @@ impl App {
             let prog = if self.tab().dl.is_some() || self.tab().full.is_some() { 0.72 } else { 0.28 };
             let mut x = 0.0;
             while x < w * prog {
-                self.rect(Rect::new(x, TOP - 2.0, 9.0, 2.0), ACCENT, 0.0);
+                self.rect(Rect::new(x, TOP - 2.0, 9.0, 2.0), sk().accent, 0.0);
                 x += 12.0;
             }
+        }
+        if let Some((msg, _)) = self.toast.clone() {
+            let (_, tw2) = self.ui_text(&msg, 12.0, 600, MONO, sk().text);
+            let bw = tw2 + 46.0;
+            let r = Rect::new((w - bw) / 2.0, h - 54.0, bw, 34.0);
+            let pc = sk().panel;
+            self.rect(r, [pc[0], pc[1], pc[2], 250], 8.0);
+            self.bevel(r, true);
+            // a little red seal, like the stamp itself
+            self.rect(Rect::new(r.x + 12.0, r.y + 9.0, 16.0, 16.0), [0xc8, 0x3a, 0x2e, 255], 3.0);
+            self.rect(Rect::new(r.x + 15.0, r.y + 12.0, 10.0, 10.0), [0xf5, 0xe6, 0xd8, 255], 2.0);
+            self.rect(Rect::new(r.x + 17.0, r.y + 14.0, 6.0, 6.0), [0xc8, 0x3a, 0x2e, 255], 1.0);
+            self.label(&msg, r.x + 36.0, r.y + 9.0, 12.0, 600, sk().text, tw2 + 4.0, MONO);
+        }
+        if self.hover == Hit::Spirit {
+            let (i, name, next) = play::form(self.stats.blocked);
+            let _ = i;
+            let msg = match next {
+                Some(n) => format!("{name} · {} cut · grows at {n}", self.stats.blocked),
+                None => format!("{name} · {} cut", self.stats.blocked),
+            };
+            let (_, lw) = self.ui_text(&msg, 11.5, 400, MONO, sk().ink);
+            let r = Rect::new(w - lw - 30.0, TAB_H + 52.0, lw + 20.0, 24.0);
+            let pc = sk().panel;
+            self.rect(r, [pc[0], pc[1], pc[2], 245], 5.0);
+            self.bevel(r, true);
+            self.label(&msg, r.x + 10.0, r.y + 4.5, 11.5, 400, sk().ink, lw + 2.0, MONO);
         }
         // where a link goes, on a small display
         if let Some(l) = self.hover_link.clone() {
             let s = l.trim_start_matches("https://").to_string();
-            let (_, lw) = self.ui_text(&s, 11.5, 400, MONO, PHOS);
+            let (_, lw) = self.ui_text(&s, 11.5, 400, MONO, sk().ink);
             let bw = (lw + 22.0).min(w * 0.6);
             let r = Rect::new(8.0, h - 32.0, bw, 24.0);
-            self.rect(r, [0x08, 0x08, 0x0a, 245], 5.0);
+            let pc = sk().panel;
+            self.rect(r, [pc[0], pc[1], pc[2], 245], 5.0);
             self.bevel(r, true);
-            self.label(&s, r.x + 11.0, r.y + 4.5, 11.5, 400, PHOS, bw - 22.0, MONO);
+            self.label(&s, r.x + 11.0, r.y + 4.5, 11.5, 400, sk().ink, bw - 22.0, MONO);
         }
     }
 }
