@@ -52,9 +52,11 @@ It needs Windows 10 or 11 and Rust 1.88 or newer. The ad blocker, [omamori](http
 
 ## two engines
 
-A page starts in the light engine. If the page is really a JavaScript application, kamaitachi reopens it in Chromium. It looks for pages with almost no text, a notice asking for JavaScript, or a bot check. That choice is remembered per site in `%APPDATA%\hayate\engines.txt`. The LITE / FULL switch in the toolbar, or `Ctrl+Shift+E`, flips it by hand.
+A page starts in the light engine. If the page is really a JavaScript application, kamaitachi reopens it in Chromium. It looks for pages with almost no text and no form, or a notice asking for JavaScript. That choice is remembered per site in `%APPDATA%\hayate\engines.txt`. A bot check opens in Chromium too, but only that once. The LITE / FULL switch in the toolbar, or `Ctrl+Shift+E`, flips it by hand.
 
-The light engine has no JavaScript at all. It handles block, inline, float, flex, grid and table layout, CSS variables, `calc()` and media queries, and it decodes images at the size they are shown. It does not draw SVG yet, and forms do not submit.
+The light engine has no JavaScript at all. It handles block, inline, float, flex, grid and table layout, CSS variables, `calc()` and media queries, and it decodes images at the size they are shown. Forms work, except for file uploads. It does not draw SVG yet.
+
+Cookies are only kept for the site in the address bar, so one set by an image or a stylesheet from elsewhere is dropped. They are stored in `%APPDATA%\hayate\cookies`, encrypted with your Windows account, and the den has a link that forgets them all. Chromium keeps its own, so signing in with one engine does not sign you in with the other.
 
 Chromium starts with flags. Each one saved memory on a YouTube video page. Turning off the GPU process took the total from 631 MB to 412 MB, and V8's lite mode cut the page's renderer from 301 MB to 190 MB. Video then decodes on the CPU, which costs battery while it plays. Set `HAYATE_CHROMIUM_ARGS` to replace the flags.
 
