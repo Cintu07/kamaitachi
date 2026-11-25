@@ -4,3 +4,5 @@
 /fuzz/artifacts
 *.md.export
 hayate-*.md
+/android/target
+/android/build

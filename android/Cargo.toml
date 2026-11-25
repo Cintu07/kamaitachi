@@ -1,0 +1,28 @@
+[package]
+name = "kamaitachi-android"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+# The Android app's native half: the same engine as Windows, a text engine on the
+# phone's own fonts, and a few JNI calls the Java side makes. Built with cargo-ndk;
+# android/build.sh turns it into an APK.
+[lib]
+name = "kamaitachi"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+hayate = { package = "kamaitachi", path = ".." }
+# shaping and glyph rasterizing in pure Rust; Android has no public C API for text
+swash = "0.2"
+# just the JNI type definitions
+jni-sys = "0.4"
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
