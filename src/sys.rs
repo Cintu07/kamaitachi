@@ -583,14 +583,12 @@ pub fn since_process_start_us() -> u64 {
     }
 }
 
-/// User plus kernel cpu time of this process so far, microseconds.
-pub fn cpu_time_us() -> u64 {
-    unsafe {
-        let (mut c, mut e, mut k, mut u): (FILETIME, FILETIME, FILETIME, FILETIME) = core::mem::zeroed();
-        GetProcessTimes(GetCurrentProcess(), &mut c, &mut e, &mut k, &mut u);
-        let f = |t: FILETIME| (t.dwHighDateTime as u64) << 32 | t.dwLowDateTime as u64;
-        (f(k) + f(u)) / 10
-    }
+/// Cpu cycles this process has used so far. Unlike its cpu time, which Windows counts in
+/// 15.6 ms ticks, this is measured at every context switch, so a short wake shows up.
+pub fn cpu_cycles() -> u64 {
+    let mut n = 0u64;
+    unsafe { windows_sys::Win32::System::WindowsProgramming::QueryProcessCycleTime(GetCurrentProcess(), &mut n) };
+    n
 }
 
 pub fn now_unix() -> u64 {
