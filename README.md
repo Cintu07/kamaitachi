@@ -31,6 +31,14 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 
 It installs for your user only, adds kamaitachi to the Start menu and lists it under Default apps. `-Uninstall` takes it out again. The exe is not signed yet, so Windows SmartScreen will ask before it first runs.
 
+## android
+
+There is an Android build too, `kamaitachi.apk` (1.6 MB) on the releases page. It needs Android 11 or newer on a 64-bit ARM phone. Open the download on the phone. Android will ask once whether your browser may install apps.
+
+Pages go through the same engine and ad blocker as on Windows, with text drawn from the phone's own fonts. Sites that need JavaScript open in the phone's System WebView, and the lite / full switch in the toolbar moves a site between the two. Images are not drawn yet. Grey boxes show where they go.
+
+`android/build.sh` builds it with the Android SDK, NDK and cargo-ndk. Gradle is not needed.
+
 ## build and run
 
 ```sh
