@@ -733,6 +733,9 @@ fn media_list(q: &str, vw: f32, vh: f32) -> bool {
 }
 
 fn media_one(q: &str, vw: f32, vh: f32) -> bool {
+    // queries are often spread over lines, or written with no space after a bracket
+    let q = q.replace(')', ") ").replace('(', " (").split_whitespace().collect::<Vec<_>>().join(" ").replace(" )", ")");
+    let q = q.as_str();
     let (neg, q) = match q.strip_prefix("not ") {
         Some(r) => (true, r.trim()),
         None => (false, q.strip_prefix("only ").unwrap_or(q).trim()),
@@ -842,6 +845,18 @@ fn feature(f: &str, vw: f32, vh: f32) -> bool {
 mod tests {
     use super::*;
     use crate::web::parse::parse;
+
+    /// Hacker News writes its phone query over three lines, with a space before each
+    /// colon. Whitespace in a media query is never significant.
+    #[test]
+    fn media_queries_ignore_how_they_are_spaced() {
+        let hn = "only screen\nand (min-width : 300px)\nand (max-width : 750px)";
+        assert!(media_matches(hn, 393.0, 800.0));
+        assert!(!media_matches(hn, 900.0, 800.0));
+        assert!(media_matches("screen\tand\t(max-width:750px)", 393.0, 800.0));
+        assert!(media_matches("(min-width:300px)and (max-width:750px)", 393.0, 800.0));
+        assert!(media_matches("not  all and (max-width: 100px)", 393.0, 800.0));
+    }
 
     #[test]
     fn selectors_match() {
