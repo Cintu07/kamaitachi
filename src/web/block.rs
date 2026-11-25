@@ -22,7 +22,18 @@ const LISTS: [(&str, &str, bool); 8] = [
 /// Lists older than this get downloaded again.
 const STALE_AFTER_SECS: u64 = 4 * 86400;
 
+static DIR: OnceLock<std::path::PathBuf> = OnceLock::new();
+
+/// Keeps the filter lists under `path` instead of %APPDATA%. Call it before start();
+/// later calls change nothing.
+pub fn set_dir(path: std::path::PathBuf) {
+    let _ = DIR.set(path);
+}
+
 fn dir() -> std::path::PathBuf {
+    if let Some(d) = DIR.get() {
+        return d.clone();
+    }
     let base = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
     std::path::Path::new(&base).join("hayate").join("filters")
 }

@@ -51,7 +51,9 @@ public final class MainActivity extends Activity {
     private TextView memory;
     private View loadingLine;
     private PageView pageView;
+    /** made the first time a site needs it: creating one loads Chromium into the app */
     private WebView web;
+    private FrameLayout content;
     private String current = "";
     private boolean full;
     /** bumped on every navigation, so a slow load that finishes late is dropped */
@@ -119,9 +121,20 @@ public final class MainActivity extends Activity {
         loadingLine.setBackgroundColor(FAINT);
         root.addView(loadingLine, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
 
-        FrameLayout content = new FrameLayout(this);
+        content = new FrameLayout(this);
         pageView = new PageView(this, href -> navigate(href, true));
         content.addView(pageView);
+        root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        setContentView(root);
+
+        tickMemory();
+        Uri data = getIntent().getData();
+        if (data != null) navigate(data.toString(), true);
+        else address.requestFocus();
+    }
+
+    private void makeWeb() {
+        if (web != null) return;
         web = new WebView(this);
         web.getSettings().setJavaScriptEnabled(true);
         web.getSettings().setDomStorageEnabled(true);
@@ -141,13 +154,14 @@ public final class MainActivity extends Activity {
         });
         web.setVisibility(View.GONE);
         content.addView(web);
-        root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-        setContentView(root);
+    }
 
-        tickMemory();
-        Uri data = getIntent().getData();
-        if (data != null) navigate(data.toString(), true);
-        else address.requestFocus();
+    /** Back in the light engine: the WebView goes, rather than sitting hidden. */
+    private void dropWeb() {
+        if (web == null) return;
+        content.removeView(web);
+        web.destroy();
+        web = null;
     }
 
     private TextView label(String text, int color) {
@@ -214,8 +228,7 @@ public final class MainActivity extends Activity {
                 }
                 current = Native.url(p);
                 showAddress(current);
-                web.setVisibility(View.GONE);
-                web.loadUrl("about:blank");
+                dropWeb();
                 pageView.setVisibility(View.VISIBLE);
                 pageView.setPage(p);
             });
@@ -227,6 +240,7 @@ public final class MainActivity extends Activity {
         full = true;
         ++seq;
         engine.setText("full");
+        makeWeb();
         loadingLine.setBackgroundColor(FAINT);
         pageView.setPage(0);
         pageView.setVisibility(View.GONE);
@@ -255,7 +269,7 @@ public final class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (full && web.canGoBack()) {
+        if (full && web != null && web.canGoBack()) {
             web.goBack();
             return;
         }

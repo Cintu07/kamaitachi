@@ -179,10 +179,12 @@ fn page<'a>(p: jlong) -> Option<&'a Page> {
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_cintu_kamaitachi_Native_start(env: *mut JNIEnv, _: jclass, dir: jstring) {
     let dir = unsafe { string(env, dir) };
-    // the blocker keeps its lists in %APPDATA%\hayate\filters on Windows. this runs
-    // once, before any other thread exists, so setting the variable is safe
-    unsafe { std::env::set_var("APPDATA", dir) };
-    block::start();
+    // the activity can be created more than once in one process
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        block::set_dir(std::path::Path::new(&dir).join("filters"));
+        block::start();
+    });
 }
 
 /// Loads and lays out a page. Blocks; Java calls it off the main thread.
