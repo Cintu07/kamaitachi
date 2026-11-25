@@ -6,7 +6,7 @@
 
 use super::dom::{t, Dom, NodeId, NONE};
 use super::style::{Display, GLine, GridDef, Rgba, Style, Styles, Track, Ts, L};
-use super::{DisplayList, Font, Item, Link, Obj, Para, Rect, Run, TextEngine};
+use super::{DisplayList, Field, Font, Item, Link, Obj, Para, Rect, Run, TextEngine};
 use crate::url::Url;
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -212,6 +212,12 @@ fn collapse(a: f32, b: f32) -> f32 {
         a + b
     }
 }
+
+/// Starts the address of something a page answers itself, see `goes_to`.
+pub const PRESS: &str = "press:";
+
+/// The grey of a hint in an empty box.
+pub const PLACEHOLDER: Rgba = [0x75, 0x75, 0x75, 255];
 
 fn font_of(s: &Style) -> Font {
     Font { family: s.font_family.clone(), size: s.font_size, weight: s.font_weight, italic: s.italic }
@@ -459,10 +465,7 @@ impl<'a> Layout<'a> {
         if s.display == Display::ListItem && s.list_style != 0 {
             self.marker(n, s, cx, cy);
         }
-        if tag == t::a
-            && let Some(href) = self.dom.attr(n, t::href)
-            && let Some(u) = self.resolve(href)
-        {
+        if let Some(u) = self.goes_to(n) {
             let i = self.out.hrefs.len() as u32;
             self.out.hrefs.push(u);
             self.out.links.push(Link { r: Rect::new(bx, by, w, bh), href: i });
@@ -503,6 +506,17 @@ impl<'a> Layout<'a> {
             return Some(h.to_string());
         }
         self.base.join(h).map(|u| u.full())
+    }
+
+    /// What clicking an element does: a link's address, or `press:` and the node number
+    /// for something the page itself answers. A page cannot write a link that becomes
+    /// one of those: every address it can write starts with https or data.
+    fn goes_to(&self, n: NodeId) -> Option<String> {
+        match self.dom.tag(n) {
+            t::a => self.resolve(self.dom.attr(n, t::href)?),
+            t::button | t::label | t::summary => Some(format!("{PRESS}{n}")),
+            _ => None,
+        }
     }
 
     fn reserve_deco(&mut self, n: NodeId, s: &Style) -> Deco {
@@ -595,7 +609,7 @@ impl<'a> Layout<'a> {
     fn shift(&mut self, from: Mark, to: Mark, dx: f32, dy: f32) {
         for it in &mut self.out.items[from.items..to.items] {
             match it {
-                Item::Rect { r, .. } | Item::Ring { r, .. } | Item::Image { r, .. } => {
+                Item::Rect { r, .. } | Item::Ring { r, .. } | Item::Image { r, .. } | Item::Field { r, .. } => {
                     r.x += dx;
                     r.y += dy;
                 }
@@ -645,6 +659,7 @@ impl<'a> Layout<'a> {
             match it {
                 Item::Rect { color, .. } | Item::Ring { color, .. } | Item::Text { color, .. } => *color = mul_alpha(*color, k),
                 Item::Image { alpha, .. } => *alpha = (*alpha as f32 * k) as u8,
+                Item::Field { .. } => {}
             }
         }
     }
@@ -656,18 +671,23 @@ impl<'a> Layout<'a> {
         let hbase = self.out.hrefs.len() as u32;
         self.out.glyphs.extend(frag.glyphs.iter().map(|g| super::Glyph { x: g.x + dx, y: g.y + dy, ..*g }));
         self.out.clips.extend(frag.clips.iter().skip(1).map(|c| Rect::new(c.x + dx, c.y + dy, c.w, c.h)));
+        let fbase = self.out.fields.len() as u32;
         self.out.hrefs.extend(frag.hrefs);
+        self.out.fields.extend(frag.fields);
         for mut it in frag.items {
             let c = it.clip();
             if c != 0 {
                 it.set_clip(c + cbase);
             }
             match &mut it {
-                Item::Rect { r, .. } | Item::Ring { r, .. } | Item::Image { r, .. } => {
+                Item::Rect { r, .. } | Item::Ring { r, .. } | Item::Image { r, .. } | Item::Field { r, .. } => {
                     r.x += dx;
                     r.y += dy;
                 }
                 Item::Text { start, .. } => *start += gbase,
+            }
+            if let Item::Field { field, .. } = &mut it {
+                *field += fbase;
             }
             self.out.items.push(it);
         }
@@ -939,10 +959,7 @@ impl<'a> Layout<'a> {
                     pb.para.text.push(0x200B);
                     return;
                 }
-                let link = if tag == t::a
-                    && let Some(h) = self.dom.attr(e, t::href)
-                    && let Some(u) = self.resolve(h)
-                {
+                let link = if let Some(u) = self.goes_to(e) {
                     self.out.hrefs.push(u);
                     (self.out.hrefs.len() - 1) as u32
                 } else {
@@ -1284,6 +1301,9 @@ impl<'a> Layout<'a> {
             t::input | t::select | t::textarea => {
                 let ty = self.dom.attr(n, t::type_).unwrap_or("text").to_ascii_lowercase();
                 if matches!(ty.as_str(), "checkbox" | "radio") {
+                    self.out.items.push(Item::Field { r, field: self.out.fields.len() as u32, clip: 0 });
+                    self.out.items.push(Item::Text { start: 0, len: 0, color: s.color, clip: 0 });
+                    self.out.fields.push(Field { node: n, font: font_of(s), color: s.color, align: 1, line_h: 0.0, multiline: false, password: false });
                     if self.dom.attr(n, t::checked).is_some() {
                         let k = r.w * 0.25;
                         self.out.items.push(Item::Rect { r: Rect::new(r.x + k, r.y + k, r.w - 2.0 * k, r.h - 2.0 * k), color: [0x1a, 0x73, 0xe8, 255], radius: if ty == "radio" { r.w } else { 1.0 }, clip: 0 });
@@ -1296,28 +1316,34 @@ impl<'a> Layout<'a> {
                     && let Some(ph) = self.dom.attr(n, t::placeholder)
                 {
                     label = ph.to_string();
-                    color = [0x75, 0x75, 0x75, 255];
+                    color = PLACEHOLDER;
                 }
                 if tag == t::select {
-                    label.push_str("  ▾");
+                    label.push_str("  \u{25be}");
                 }
-                if ty == "password" {
-                    label = "•".repeat(label.chars().count());
-                }
-                if label.is_empty() {
-                    return;
-                }
-                let txt: Vec<u16> = label.encode_utf16().collect();
-                let len = txt.len() as u32;
-                let para = Para {
-                    text: txt,
-                    runs: vec![Run { start: 0, len, font: font_of(s), color, deco: 0, link: u32::MAX }],
-                    align: if matches!(ty.as_str(), "submit" | "button" | "reset") { 3 } else { 1 },
-                    nowrap: tag != t::textarea,
-                    ..Default::default()
+                let pressed = matches!(ty.as_str(), "submit" | "button" | "reset") && tag == t::input;
+                let field = Field {
+                    node: n,
+                    font: font_of(s),
+                    color: s.color,
+                    align: match s.text_align {
+                        _ if pressed => 3,
+                        2 | 3 | 5 => s.text_align,
+                        _ => 1,
+                    },
+                    line_h: if tag == t::textarea { s.line_px() } else { 0.0 },
+                    multiline: tag == t::textarea,
+                    password: ty == "password" && color != PLACEHOLDER,
                 };
+                let para = field.para(&field.shown(&label), color);
                 let m = self.mark();
-                self.text.layout(&para, r.w.max(1.0), r.x, r.y, Some(&mut self.out));
+                let h = self.text.layout(&para, r.w.max(1.0), r.x, r.y, None).height;
+                let mut own = DisplayList::new();
+                self.text.layout(&para, r.w.max(1.0), r.x, field.top(r, h), Some(&mut own));
+                self.out.items.push(Item::Field { r, field: self.out.fields.len() as u32, clip: 0 });
+                self.out.items.push(Item::Text { start: self.out.glyphs.len() as u32, len: own.glyphs.len() as u32, color, clip: 0 });
+                self.out.glyphs.extend(own.glyphs);
+                self.out.fields.push(field);
                 self.clip_range(m, r);
             }
             _ => {}
@@ -2554,6 +2580,19 @@ pub mod tests {
         let q = q.expect("the box");
         assert!(q.x + q.w < 400.0, "{q:?}");
         assert!(q.h < 40.0, "{q:?}");
+    }
+
+    #[test]
+    fn controls_can_be_found_and_pressed() {
+        let dl = render("<p>a</p><form><label>name <input name=n value=abc></label><input type=hidden name=h><button>go</button></form>", "", 400.0);
+        assert_eq!(dl.fields.len(), 1);
+        let (r, at) = dl.items.iter().enumerate().find_map(|(i, it)| if let Item::Field { r, .. } = it { Some((*r, i)) } else { None }).expect("a field");
+        // its text is always the item after it
+        assert!(matches!(dl.items[at + 1], Item::Text { len: 3, .. }));
+        assert_eq!(dl.field_at(r.x + 2.0, r.y + 2.0).map(|f| f.0), Some(0));
+        assert!(dl.field_at(r.x - 8.0, r.y).is_none());
+        let pressed: std::collections::HashSet<&str> = dl.links.iter().map(|l| dl.hrefs[l.href as usize].as_str()).filter(|h| h.starts_with(PRESS)).collect();
+        assert_eq!(pressed.len(), 2, "the label and the button");
     }
 
     #[test]

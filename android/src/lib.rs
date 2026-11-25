@@ -98,7 +98,7 @@ fn open(url: &str, width_px: i32, dpr: f32) -> Page {
     let mut text = flow::Flow::new();
     let mut images = Images::default();
     let dl = layout::layout(&doc.dom, &styles, &mut text, &mut images, &doc.base, vw, vh);
-    let needs_js = needs && load::needs_js(&doc, &dl);
+    let needs_js = needs && (load::needs_js(&doc, &dl) || load::bot_check(&doc, &dl));
     Page { url: doc.url.full(), dl, needs_js, dpr }
 }
 

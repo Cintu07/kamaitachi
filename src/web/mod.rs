@@ -6,6 +6,7 @@
 pub mod block;
 pub mod css;
 pub mod dom;
+pub mod form;
 pub mod layout;
 pub mod load;
 pub mod parse;
@@ -56,17 +57,20 @@ pub enum Item {
     /// glyphs[start..start + len], one color
     Text { start: u32, len: u32, color: Rgba, clip: u16 },
     Image { r: Rect, img: u32, alpha: u8, radius: f32, clip: u16 },
+    /// the inside of a form control: fields[field], whose text is the next item. whoever
+    /// is typing in it draws their own text there instead
+    Field { r: Rect, field: u32, clip: u16 },
 }
 
 impl Item {
     pub fn clip(&self) -> u16 {
         match *self {
-            Item::Rect { clip, .. } | Item::Ring { clip, .. } | Item::Text { clip, .. } | Item::Image { clip, .. } => clip,
+            Item::Rect { clip, .. } | Item::Ring { clip, .. } | Item::Text { clip, .. } | Item::Image { clip, .. } | Item::Field { clip, .. } => clip,
         }
     }
     pub fn set_clip(&mut self, c: u16) {
         match self {
-            Item::Rect { clip, .. } | Item::Ring { clip, .. } | Item::Text { clip, .. } | Item::Image { clip, .. } => *clip = c,
+            Item::Rect { clip, .. } | Item::Ring { clip, .. } | Item::Text { clip, .. } | Item::Image { clip, .. } | Item::Field { clip, .. } => *clip = c,
         }
     }
 }
@@ -75,6 +79,38 @@ impl Item {
 pub struct Link {
     pub r: Rect,
     pub href: u32,
+}
+
+/// A form control, as much of it as drawing its text takes.
+#[derive(Clone, Debug)]
+pub struct Field {
+    pub node: dom::NodeId,
+    pub font: Font,
+    pub color: Rgba,
+    /// as in [`Para`]
+    pub align: u8,
+    pub line_h: f32,
+    /// text wraps, and starts at the top instead of the middle
+    pub multiline: bool,
+    pub password: bool,
+}
+
+impl Field {
+    /// What the box shows for a value: a password's letters are never drawn.
+    pub fn shown(&self, value: &str) -> String {
+        if self.password { "\u{2022}".repeat(value.chars().count()) } else { value.replace('\n', "\u{2028}") }
+    }
+
+    pub fn para(&self, shown: &str, color: Rgba) -> Para {
+        let text: Vec<u16> = shown.encode_utf16().collect();
+        let len = text.len() as u32;
+        Para { text, runs: vec![Run { start: 0, len, font: self.font.clone(), color, deco: 0, link: u32::MAX }], align: self.align, line_h: self.line_h, nowrap: !self.multiline, ..Default::default() }
+    }
+
+    /// Where the text starts inside a box: the top, or the middle for a single line.
+    pub fn top(&self, r: Rect, text_h: f32) -> f32 {
+        if self.multiline { r.y } else { r.y + (r.h - text_h) / 2.0 }
+    }
 }
 
 /// What a page draws, in document coordinates (css px).
@@ -86,6 +122,7 @@ pub struct DisplayList {
     pub clips: Vec<Rect>,
     pub links: Vec<Link>,
     pub hrefs: Vec<String>,
+    pub fields: Vec<Field>,
     pub height: f32,
     pub width: f32,
     /// the canvas: the root or body background
@@ -106,6 +143,17 @@ impl DisplayList {
             + self.glyphs.capacity() * std::mem::size_of::<Glyph>()
             + self.links.capacity() * std::mem::size_of::<Link>()
             + self.hrefs.iter().map(|h| h.capacity() + 24).sum::<usize>()
+    }
+
+    /// The form control at a point, and the inside of its box.
+    pub fn field_at(&self, x: f32, y: f32) -> Option<(u32, Rect)> {
+        if self.fields.is_empty() {
+            return None;
+        }
+        self.items.iter().rev().find_map(|it| match *it {
+            Item::Field { r, field, clip } if r.contains(x, y) && self.clips[clip as usize].contains(x, y) => Some((field, r)),
+            _ => None,
+        })
     }
 
     pub fn link_at(&self, x: f32, y: f32) -> Option<&str> {
@@ -173,4 +221,17 @@ pub trait TextEngine {
     fn layout(&mut self, p: &Para, width: f32, x: f32, y: f32, out: Option<&mut DisplayList>) -> ParaOut;
     /// (min-content, max-content) widths.
     fn widths(&mut self, p: &Para) -> (f32, f32);
+    /// Where a caret stands before the utf-16 unit `at`, relative to the paragraph. The
+    /// width is 0.
+    fn caret(&mut self, _p: &Para, _width: f32, _at: usize) -> Rect {
+        Rect::default()
+    }
+    /// The utf-16 position nearest a point.
+    fn index_at(&mut self, _p: &Para, _width: f32, _x: f32, _y: f32) -> usize {
+        0
+    }
+    /// The areas a selection covers, one for each line or direction.
+    fn marked(&mut self, _p: &Para, _width: f32, _from: usize, _to: usize) -> Vec<Rect> {
+        Vec::new()
+    }
 }

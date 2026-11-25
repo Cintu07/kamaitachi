@@ -542,4 +542,29 @@ impl TextEngine for Dw {
         };
         (min.min(tm.width).ceil(), tm.width.ceil())
     }
+
+    fn caret(&mut self, p: &Para, width: f32, at: usize) -> Rect {
+        let Some((layout, _objs)) = self.build(p, width) else { return Rect::default() };
+        let (mut x, mut y) = (0.0, 0.0);
+        let mut m = DWRITE_HIT_TEST_METRICS::default();
+        unsafe {
+            let _ = layout.HitTestTextPosition(at as u32, false, &mut x, &mut y, &mut m);
+        }
+        Rect::new(x, y, 0.0, m.height)
+    }
+
+    fn index_at(&mut self, p: &Para, width: f32, x: f32, y: f32) -> usize {
+        let Some((layout, _objs)) = self.build(p, width) else { return 0 };
+        let (mut after, mut inside) = (FALSE, FALSE);
+        let mut m = DWRITE_HIT_TEST_METRICS::default();
+        unsafe {
+            let _ = layout.HitTestPoint(x, y, &mut after, &mut inside, &mut m);
+        }
+        (m.textPosition + if after.as_bool() { m.length } else { 0 }) as usize
+    }
+
+    fn marked(&mut self, p: &Para, width: f32, from: usize, to: usize) -> Vec<Rect> {
+        let Some((layout, _objs)) = self.build(p, width) else { return Vec::new() };
+        hit_rects(&layout, from as u32, (to - from) as u32, 0.0, 0.0).iter().map(|m| Rect::new(m.left, m.top, m.width, m.height)).collect()
+    }
 }

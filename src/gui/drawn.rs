@@ -161,7 +161,8 @@ impl App {
             rx = sw.x;
         }
         let ar = Rect::new(122.0, TAB_H + 7.0, (rx - 122.0 - 18.0).max(80.0), 32.0);
-        let focused = self.edit.focused;
+        let focused = self.addr_focused;
+        let (shown, caret, marked) = if focused { self.addr_view(ar.w - 8.0) } else { Default::default() };
         let (form, _, _) = play::form(self.stats.blocked);
         let eating = self.ate.is_some_and(|t| (t.elapsed().as_millis() / 90) % 2 == 0);
         let spirit_at = (w - 62.0, 9.0);
@@ -231,9 +232,9 @@ impl App {
             // the address: a ruled line to write on, inked when you are writing
             let base = ar.y + ar.h - 3.0;
             if focused {
-                let selected = self.edit.all && !self.edit.text.is_empty();
-                if selected {
-                    c.wash(&[(ar.x + 4.0, ar.y + 3.0), (ar.x + ar.w * 0.6, ar.y + 2.0), (ar.x + ar.w * 0.6, ar.y + ar.h - 5.0), (ar.x + 4.0, ar.y + ar.h - 4.0)], s.accent, 0.5, 150);
+                if let Some((a, b)) = marked {
+                    let (x0, x1) = (ar.x + 2.0 + a, ar.x + 2.0 + b);
+                    c.stamp(&[(x0, ar.y + 4.0), (x1, ar.y + 3.2), (x1, ar.y + ar.h - 6.0), (x0, ar.y + ar.h - 5.2)], s.accent, 0.28, 150);
                 }
                 c.sketch(&[(ar.x, base), (ar.x + ar.w, base - 0.4)], ink(&s), 151);
             } else {
@@ -298,16 +299,13 @@ impl App {
         self.hits.push((ar, Hit::Addr));
         let ty = ar.y + 6.0;
         if focused {
-            let text: String = self.edit.text.iter().collect();
-            let before: String = self.edit.text[..self.edit.caret].iter().collect();
-            if text.is_empty() {
+            if shown.is_empty() {
                 self.words("search, or type an address", ar.x + 2.0, ty + 1.0, 14.0, false, TYPEWRITER, s.faint, ar.w - 8.0);
             } else {
-                self.words(&text, ar.x + 2.0, ty, 15.0, false, TYPEWRITER, s.text, ar.w - 8.0);
+                self.words(&shown, ar.x + 2.0, ty, 15.0, false, TYPEWRITER, s.text, ar.w - 8.0);
             }
-            if !self.edit.all {
-                let bw = self.measure(&before, 15.0, false, TYPEWRITER);
-                self.rect(Rect::new(ar.x + 2.5 + bw, ar.y + 5.0, 1.6, 20.0), s.ink, 0.8);
+            if marked.is_none() {
+                self.rect(Rect::new(ar.x + 2.5 + caret, ar.y + 5.0, 1.6, 20.0), s.ink, 0.8);
             }
         } else {
             let url = self.tab().url.clone();
@@ -364,7 +362,7 @@ impl App {
             self.slip(r);
             self.words(&t, r.x + 11.0, r.y + 6.0, 12.0, false, TYPEWRITER, s.ink, lw + 2.0);
         }
-        if let Some(l) = self.hover_link.clone() {
+        if let Some(l) = self.hover_link.clone().filter(|l| !l.starts_with(layout::PRESS)) {
             let t = l.trim_start_matches("https://").to_string();
             let lw = self.measure(&t, 12.0, false, TYPEWRITER);
             let bw = (lw + 22.0).min(w * 0.6);

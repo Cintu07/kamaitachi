@@ -164,6 +164,20 @@ impl Dom {
         self.elem(n)?.attrs.iter().find(|(k, _)| *k == a).map(|(_, v)| v.as_str())
     }
 
+    pub fn set_attr(&mut self, n: NodeId, a: u32, v: &str) {
+        let Some(Kind::Elem(e)) = self.nodes.get_mut(n as usize).map(|n| &mut n.kind) else { return };
+        match e.attrs.iter_mut().find(|(k, _)| *k == a) {
+            Some((_, old)) => *old = v.to_string(),
+            None => e.attrs.push((a, v.to_string())),
+        }
+    }
+
+    pub fn remove_attr(&mut self, n: NodeId, a: u32) {
+        if let Some(Kind::Elem(e)) = self.nodes.get_mut(n as usize).map(|n| &mut n.kind) {
+            e.attrs.retain(|(k, _)| *k != a);
+        }
+    }
+
     pub fn parent(&self, n: NodeId) -> NodeId {
         self.nodes[n as usize].parent
     }

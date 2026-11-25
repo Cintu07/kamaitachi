@@ -295,9 +295,18 @@ fn fetch_all(urls: &[String], page_host: &str) -> Vec<Option<(Url, String)>> {
     })
 }
 
+/// Whether a site is asking if this is a person. Those pages are opened in the full engine
+/// to be answered, and the site is not remembered as one that needs it.
+pub fn bot_check(doc: &Doc, dl: &super::DisplayList) -> bool {
+    let titled = ["Just a moment", "Attention Required", "Verifying you are human", "Checking your browser"].iter().any(|t| dl.title.contains(t));
+    // duckduckgo's has an ordinary title
+    let form = super::dom::lookup("challenge-form");
+    titled || (form.is_some() && (0..doc.dom.nodes.len() as u32).any(|n| doc.dom.elem(n).is_some_and(|e| Some(e.id) == form)))
+}
+
 /// Whether a page is really a JavaScript application, so the light engine would show
-/// next to nothing: scripts and almost no text, a notice asking for JavaScript, or a
-/// bot check. Such pages go to the full engine instead.
+/// next to nothing: scripts and almost no text, or a notice asking for JavaScript. Such
+/// pages go to the full engine instead.
 pub fn needs_js(doc: &Doc, dl: &super::DisplayList) -> bool {
     let dom = &doc.dom;
     let scripts = (0..dom.nodes.len() as u32).filter(|&n| dom.tag(n) == t::script).count();
@@ -309,9 +318,10 @@ pub fn needs_js(doc: &Doc, dl: &super::DisplayList) -> bool {
     }
     let nos = nos.to_lowercase();
     let warns = nos.contains("javascript") && ["enable", "required", "disabled", "turn on", "needs", "requires", "please"].iter().any(|w| nos.contains(w));
-    let challenge = ["Just a moment", "Attention Required", "Verifying you are human", "Checking your browser"].iter().any(|t| dl.title.contains(t));
     let glyphs = dl.glyphs.len();
-    (scripts > 0 && glyphs < 250) || (warns && glyphs < 4000) || challenge
+    // a sign-in page can be a few words and two boxes, and works without its scripts
+    let form = dl.fields.iter().any(|f| super::form::control(dom, f.node).is_some_and(|c| c.typed()) && super::form::owner(dom, f.node).is_some());
+    (scripts > 0 && glyphs < 250 && !form) || (warns && glyphs < 4000)
 }
 
 #[cfg(test)]

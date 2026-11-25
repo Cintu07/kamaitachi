@@ -6,6 +6,8 @@
 mod art;
 pub mod brush;
 mod drawn;
+mod drive;
+mod fields;
 pub mod full;
 pub mod gpu;
 pub mod image;
@@ -15,6 +17,7 @@ pub mod skin;
 pub mod soft;
 pub mod text;
 
+use crate::edit::Edit;
 use crate::net::cookies;
 use crate::url::Url;
 use crate::web::layout::{self, Images};
@@ -22,6 +25,7 @@ use crate::web::load;
 use crate::web::style::{media_key, Cascade, Styles};
 use crate::web::{DisplayList, Font, Item, Para, Rect, Rgba, Run, TextEngine};
 use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2, ICoreWebView2Controller, ICoreWebView2Environment};
+use fields::{Focus, Menu, Mods};
 use gpu::Clip;
 use paint::Painter;
 use play::Stats;
@@ -68,7 +72,7 @@ enum Msg {
     Done { tab: u64, seq: u64, page: Box<Page>, dl: DisplayList, pixels: Vec<(u32, u32, u32, Vec<u8>)>, blocked: u32 },
     Fail { tab: u64, seq: u64, err: String, url: String },
     /// the page is a javascript app: open it in the full engine
-    NeedsJs { tab: u64, seq: u64, url: String },
+    NeedsJs { tab: u64, seq: u64, url: String, learn: bool },
     /// the page is on a malware or phishing list
     Danger { tab: u64, seq: u64, url: String },
 }
@@ -143,14 +147,6 @@ enum Hit {
     Spirit,
 }
 
-#[derive(Default)]
-struct Edit {
-    text: Vec<char>,
-    caret: usize,
-    focused: bool,
-    all: bool,
-}
-
 struct App {
     hwnd: HWND,
     gpu: Painter,
@@ -167,9 +163,23 @@ struct App {
     hover: Hit,
     hover_link: Option<String>,
     hits: Vec<(Rect, Hit)>,
+    /// the address being typed
     edit: Edit,
+    addr_focused: bool,
+    /// the control of a page being used, and the list it has open
+    focus: Option<Focus>,
+    menu: Option<Menu>,
+    /// the mouse is over a box to type in, or something to press
+    over: Option<bool>,
+    /// the first half of a character that arrives as two messages, an emoji say
+    half: u16,
+    last_click: (Instant, f32, f32),
     relayout_due: bool,
     shot: Option<(String, u32)>,
+    /// what a test render does to the page first
+    steps: Vec<String>,
+    driving: bool,
+    drove: bool,
     /// the window size asked for, device px
     want: (i32, i32),
     started: Instant,
@@ -301,8 +311,17 @@ pub fn run(urls: Vec<String>) -> Result<(), String> {
             hover_link: None,
             hits: Vec::new(),
             edit: Edit::default(),
+            addr_focused: false,
+            focus: None,
+            menu: None,
+            over: None,
+            half: 0,
+            last_click: (Instant::now(), -100.0, -100.0),
             relayout_due: false,
             shot,
+            steps: drive::steps(),
+            driving: false,
+            drove: false,
             want: ((ww as f32 * scale) as i32, (wh as f32 * scale) as i32),
             started: Instant::now(),
             env: None,
@@ -465,7 +484,9 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             }
             WM_SETCURSOR => {
                 if (lp.0 & 0xFFFF) as u32 == HTCLIENT {
-                    let c = if app.hover_link.is_some() || matches!(app.hover, Hit::Tab(_) | Hit::Close(_) | Hit::NewTab | Hit::Back | Hit::Fwd | Hit::Reload | Hit::Engine | Hit::Spirit) {
+                    let c = if app.over == Some(true) {
+                        IDC_IBEAM
+                    } else if app.over == Some(false) || app.hover_link.is_some() || matches!(app.hover, Hit::Tab(_) | Hit::Close(_) | Hit::NewTab | Hit::Back | Hit::Fwd | Hit::Reload | Hit::Engine | Hit::Spirit) {
                         IDC_HAND
                     } else if app.hover == Hit::Addr {
                         IDC_IBEAM
@@ -478,12 +499,16 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 DefWindowProcW(hwnd, msg, wp, lp)
             }
             WM_LBUTTONDOWN => {
-                app.click(lo(lp), hi(lp), key_down(VK_CONTROL));
+                app.click(lo(lp), hi(lp), Mods { ctrl: key_down(VK_CONTROL), shift: key_down(VK_SHIFT), alt: false });
+                LRESULT(0)
+            }
+            WM_LBUTTONUP => {
+                app.drop_field();
                 LRESULT(0)
             }
             WM_MBUTTONDOWN => {
                 app.mouse_move(lo(lp), hi(lp));
-                if let Some(l) = app.hover_link.clone() {
+                if let Some(l) = app.hover_link.clone().filter(|l| !l.starts_with(layout::PRESS)) {
                     app.open_background(&l);
                 } else if let Hit::Tab(i) = app.hover {
                     app.close_tab(i);
@@ -501,7 +526,9 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             }
             WM_MOUSEWHEEL => {
                 let d = ((wp.0 >> 16) & 0xFFFF) as i16 as f32 / 120.0;
-                if key_down(VK_CONTROL) {
+                if app.scroll_menu(-d as i32 * 3) {
+                    app.render();
+                } else if key_down(VK_CONTROL) {
                     app.set_zoom(app.zoom * if d > 0.0 { 1.1 } else { 1.0 / 1.1 });
                 } else {
                     app.scroll_by(-d * 120.0);
@@ -509,20 +536,23 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 LRESULT(0)
             }
             WM_KEYDOWN | WM_SYSKEYDOWN => {
-                if app.key(VIRTUAL_KEY(wp.0 as u16), msg == WM_SYSKEYDOWN) {
+                let m = Mods { ctrl: key_down(VK_CONTROL), shift: key_down(VK_SHIFT), alt: msg == WM_SYSKEYDOWN };
+                if app.key(VIRTUAL_KEY(wp.0 as u16), m) {
                     app.render();
                     return LRESULT(0);
                 }
                 DefWindowProcW(hwnd, msg, wp, lp)
             }
             WM_CHAR => {
-                if app.edit.focused {
-                    if let Some(c) = char::from_u32(wp.0 as u32)
-                        && !c.is_control()
-                    {
-                        app.insert(&c.to_string());
-                        app.render();
-                    }
+                let unit = wp.0 as u16;
+                let pair = [std::mem::take(&mut app.half), unit];
+                if (0xD800..0xDC00).contains(&unit) {
+                    app.half = unit;
+                    return LRESULT(0);
+                }
+                let units = if pair[0] != 0 { &pair[..] } else { &pair[1..] };
+                for c in char::decode_utf16(units.iter().copied()).flatten().filter(|c| !c.is_control()) {
+                    app.type_char(c);
                 }
                 LRESULT(0)
             }
@@ -555,7 +585,8 @@ fn private_mb() -> f32 {
 }
 
 /// The full pipeline for one page, on a worker thread.
-fn load_page(url: String, vw: f32, vh: f32, dpr: f32, tab: u64, seq: u64, shared: Arc<Shared>) {
+fn load_page(req: load::Request, vw: f32, vh: f32, dpr: f32, tab: u64, seq: u64, shared: Arc<Shared>) {
+    let url = if req.url.host == "hayate" { START.to_string() } else { req.url.full() };
     let r: Result<(), String> = (|| {
         if url != START && crate::web::block::is_danger(&url) {
             shared.post(Msg::Danger { tab, seq, url: url.clone() });
@@ -564,16 +595,21 @@ fn load_page(url: String, vw: f32, vh: f32, dpr: f32, tab: u64, seq: u64, shared
         let doc = if url == START {
             load::from_html(START_HTML, Url { host: "hayate".into(), path: "/start".into() }, 1)
         } else {
-            let u = Url::parse(&url).ok_or_else(|| format!("not an address: {url}"))?;
-            load::load(&load::Request::get(u))?
+            load::load(&req)?
         };
+        // a link that looked fine can redirect to one that is not
+        if url != START && crate::web::block::is_danger(&doc.url.full()) {
+            shared.post(Msg::Danger { tab, seq, url: doc.url.full() });
+            return Ok(());
+        }
         let mut dw = Dw::new();
         let styles = Cascade { dom: &doc.dom, sheets: &doc.sheets, vw, vh }.run();
         let mut images = Images::default();
         let dl = layout::layout(&doc.dom, &styles, &mut dw, &mut images, &doc.base, vw, vh);
         let final_url = if url == START { START.to_string() } else { doc.url.full() };
-        if url != START && load::needs_js(&doc, &dl) {
-            shared.post(Msg::NeedsJs { tab, seq, url: final_url });
+        let check = url != START && load::bot_check(&doc, &dl);
+        if check || (url != START && load::needs_js(&doc, &dl)) {
+            shared.post(Msg::NeedsJs { tab, seq, url: final_url, learn: !check });
             return Ok(());
         }
         shared.post(Msg::Preview { tab, seq, dl: dl.clone(), url: final_url });
@@ -625,8 +661,6 @@ fn load_page(url: String, vw: f32, vh: f32, dpr: f32, tab: u64, seq: u64, shared
         shared.post(Msg::Fail { tab, seq, err: e, url });
     }
 }
-
-/// Whether a page is a javascript application that shows nothing useful without it.
 
 fn fetch_images(urls: &[String], page_host: &str) -> Vec<Option<Vec<u8>>> {
     let next = AtomicUsize::new(0);
@@ -1208,7 +1242,7 @@ impl App {
                             self.tabs[i].parked = false;
                             self.tabs[i].picture_img = None;
                             self.update_views();
-                            if i == self.cur && !self.edit.focused
+                            if i == self.cur && !self.addr_focused
                                 && let Some(f) = &self.tabs[i].full
                             {
                                 full::focus(&f.ctl);
@@ -1244,7 +1278,7 @@ impl App {
                     self.new_tab(&url);
                 }
                 full::Ev::Key { vk, alt } => {
-                    self.key(VIRTUAL_KEY(vk as u16), alt);
+                    self.key(VIRTUAL_KEY(vk as u16), Mods { ctrl: key_down(VK_CONTROL), shift: key_down(VK_SHIFT), alt });
                 }
                 full::Ev::Danger { tab, url } => {
                     if let Some(i) = self.tabs.iter().position(|t| t.id == tab) {
@@ -1304,6 +1338,25 @@ impl App {
 
     /// Starts loading `url` into tab `i`; `push` records the old page in history.
     fn load(&mut self, i: usize, url: String, push: bool) {
+        self.load_from(i, url, push, String::new());
+    }
+
+    /// The same, for a link on a page of the site `from`.
+    fn load_from(&mut self, i: usize, url: String, push: bool, from: String) {
+        let parsed = if url == START { Some(Url { host: "hayate".into(), path: "/start".into() }) } else { Url::parse(&url) };
+        match parsed {
+            Some(u) => self.open(i, load::Request { url: u, body: None, from }, push),
+            None => self.say("that is not an address"),
+        }
+    }
+
+    /// Opens a page in tab `i`: an address, a link, or the answer to a form.
+    fn open(&mut self, i: usize, req: load::Request, push: bool) {
+        let url = if req.url.host == "hayate" { START.to_string() } else { req.url.full() };
+        if i == self.cur {
+            self.focus = None;
+            self.menu = None;
+        }
         if let Some(rest) = url.strip_prefix("https://kamaitachi.local/") {
             if rest == "den" {
                 return self.show_den(i, push);
@@ -1332,7 +1385,8 @@ impl App {
         if url != START && crate::web::block::is_danger(&url) {
             return self.show_danger(i, url, push);
         }
-        if self.wants_full(&url) {
+        // a form's answer is opened here: the full engine has no way to be handed one
+        if req.body.is_none() && self.wants_full(&url) {
             return self.load_full(i, url, push);
         }
         if self.tabs[i].full_mode {
@@ -1361,7 +1415,7 @@ impl App {
             t.title = url.trim_start_matches("https://").to_string();
         }
         let (id, seq) = (t.id, t.seq);
-        let _ = std::thread::Builder::new().stack_size(64 << 20).name("page".into()).spawn(move || load_page(url, vw, vh, dpr, id, seq, shared));
+        let _ = std::thread::Builder::new().stack_size(64 << 20).name("page".into()).spawn(move || load_page(req, vw, vh, dpr, id, seq, shared));
         self.update_title();
     }
 
@@ -1377,7 +1431,7 @@ impl App {
             let c = self.cur;
             self.load(c, url, true);
         }
-        self.edit.focused = false;
+        self.addr_focused = false;
     }
 
     fn go_back(&mut self) {
@@ -1508,6 +1562,9 @@ impl App {
                     t.page = Some(page);
                     t.loading = false;
                     save_cookies();
+                    if i == self.cur {
+                        self.autofocus();
+                    }
                     let t = &mut self.tabs[i];
                     // the window may have changed size while this page loaded
                     if i == self.cur && (t.vw - self.view_w()).abs() > 0.5 {
@@ -1531,11 +1588,13 @@ impl App {
                     let Some(i) = self.tabs.iter().position(|t| t.id == tab && t.seq == seq) else { continue };
                     self.show_danger(i, url, false);
                 }
-                Msg::NeedsJs { tab, seq, url } => {
+                Msg::NeedsJs { tab, seq, url, learn } => {
                     let Some(i) = self.tabs.iter().position(|t| t.id == tab && t.seq == seq) else { continue };
                     // learn it, so the next visit goes straight to the full engine
-                    self.engines.insert(host_of(&url), true);
-                    self.save_engines();
+                    if learn {
+                        self.engines.insert(host_of(&url), true);
+                        self.save_engines();
+                    }
                     self.load_full(i, url, false);
                 }
                 Msg::Fail { tab, seq, err, url } => {
@@ -1591,20 +1650,28 @@ impl App {
         }
         let url = self.tab().url.clone();
         let shown = if url == START { String::new() } else { url };
-        self.edit = Edit { caret: shown.chars().count(), text: shown.chars().collect(), focused: true, all: true };
+        self.blur();
+        self.edit = Edit::new(&shown);
+        self.edit.select_all();
+        self.addr_focused = true;
     }
 
-    fn insert(&mut self, s: &str) {
-        let e = &mut self.edit;
-        if e.all {
-            e.text.clear();
-            e.caret = 0;
-            e.all = false;
+    /// A character from the keyboard.
+    fn type_char(&mut self, c: char) {
+        if self.menu_char(c) {
+        } else if self.addr_focused {
+            self.edit.insert(&c.to_string());
+        } else if self.typing() {
+            self.type_text(&c.to_string());
+        } else {
+            return;
         }
-        for c in s.chars().filter(|c| !c.is_control()) {
-            e.text.insert(e.caret, c);
-            e.caret += 1;
-        }
+        self.render();
+    }
+
+    /// The text being edited, in the address bar or on the page.
+    fn editing(&mut self) -> Option<&mut Edit> {
+        if self.addr_focused { Some(&mut self.edit) } else { self.focused_edit() }
     }
 
     fn paste(&mut self) {
@@ -1627,7 +1694,11 @@ impl App {
             let _ = CloseClipboard();
             out
         };
-        self.insert(&s.replace(['\r', '\n'], " "));
+        if self.addr_focused {
+            self.edit.insert(s.trim());
+        } else {
+            self.type_text(&s);
+        }
     }
 
     fn copy(&self, s: &str) {
@@ -1649,10 +1720,29 @@ impl App {
         }
     }
 
+    /// Copy, cut and paste in whatever is being edited.
+    fn clipboard_key(&mut self, vk: VIRTUAL_KEY) -> bool {
+        // a password can be pasted in but not copied out
+        let hidden = !self.addr_focused && self.password();
+        let Some(e) = self.editing() else { return false };
+        let picked = e.selected();
+        match vk {
+            VK_V => self.paste(),
+            VK_C | VK_X if picked.is_empty() || hidden => {}
+            VK_C => self.copy(&picked),
+            VK_X => {
+                e.insert("");
+                self.copy(&picked);
+                self.keep_value();
+            }
+            _ => return false,
+        }
+        true
+    }
+
     /// Returns true when the key was used.
-    fn key(&mut self, vk: VIRTUAL_KEY, alt: bool) -> bool {
-        let ctrl = key_down(VK_CONTROL);
-        let shift = key_down(VK_SHIFT);
+    fn key(&mut self, vk: VIRTUAL_KEY, m: Mods) -> bool {
+        let Mods { ctrl, shift, alt } = m;
         if alt {
             match vk {
                 VK_LEFT => self.go_back(),
@@ -1660,6 +1750,15 @@ impl App {
                 VK_D => self.focus_addr(),
                 _ => return false,
             }
+            return true;
+        }
+        if ctrl && self.clipboard_key(vk) {
+            return true;
+        }
+        if self.addr_focused && fields::edit_key(&mut self.edit, vk, m) {
+            return true;
+        }
+        if !self.addr_focused && self.field_key(vk, m) {
             return true;
         }
         if ctrl {
@@ -1698,12 +1797,6 @@ impl App {
                 VK_OEM_PLUS | VK_ADD => self.set_zoom(self.zoom * 1.1),
                 VK_OEM_MINUS | VK_SUBTRACT => self.set_zoom(self.zoom / 1.1),
                 VK_0 | VK_NUMPAD0 => self.set_zoom(1.0),
-                VK_A if self.edit.focused => self.edit.all = true,
-                VK_V if self.edit.focused => self.paste(),
-                VK_C if self.edit.focused => {
-                    let s: String = self.edit.text.iter().collect();
-                    self.copy(&s);
-                }
                 VK_C => {
                     let u = self.tab().url.clone();
                     self.copy(&u);
@@ -1726,49 +1819,13 @@ impl App {
             self.reload();
             return true;
         }
-        if self.edit.focused {
-            let e = &mut self.edit;
+        if self.addr_focused {
             match vk {
                 VK_RETURN => {
-                    let s: String = e.text.iter().collect();
+                    let s = self.edit.text();
                     self.navigate(&s, false);
                 }
-                VK_ESCAPE => e.focused = false,
-                VK_BACK => {
-                    if e.all {
-                        e.text.clear();
-                        e.caret = 0;
-                        e.all = false;
-                    } else if e.caret > 0 {
-                        e.caret -= 1;
-                        e.text.remove(e.caret);
-                    }
-                }
-                VK_DELETE => {
-                    if e.all {
-                        e.text.clear();
-                        e.caret = 0;
-                        e.all = false;
-                    } else if e.caret < e.text.len() {
-                        e.text.remove(e.caret);
-                    }
-                }
-                VK_LEFT => {
-                    e.all = false;
-                    e.caret = e.caret.saturating_sub(1);
-                }
-                VK_RIGHT => {
-                    e.all = false;
-                    e.caret = (e.caret + 1).min(e.text.len());
-                }
-                VK_HOME => {
-                    e.all = false;
-                    e.caret = 0;
-                }
-                VK_END => {
-                    e.all = false;
-                    e.caret = e.text.len();
-                }
+                VK_ESCAPE => self.addr_focused = false,
                 _ => return false,
             }
             return true;
@@ -1807,6 +1864,10 @@ impl App {
 
     fn mouse_move(&mut self, x: f32, y: f32) {
         self.mouse = (x, y);
+        if self.hover_menu(x, y) || self.drag_field(x, y) {
+            return self.render();
+        }
+        self.over = self.control_at(x, y).map(|(_, c, _)| c.typed());
         let h = self.hit(x, y);
         let link = if y > TOP * self.scale {
             let k = self.k();
@@ -1822,12 +1883,16 @@ impl App {
         }
     }
 
-    fn click(&mut self, x: f32, y: f32, ctrl: bool) {
+    fn click(&mut self, x: f32, y: f32, m: Mods) {
         self.mouse_move(x, y);
+        let (t, lx, ly) = self.last_click;
+        let double = t.elapsed().as_millis() < unsafe { GetDoubleClickTime() } as u128 && (x - lx).abs() + (y - ly).abs() < 8.0;
+        self.last_click = (if double { t - std::time::Duration::from_secs(9).min(t.elapsed()) } else { Instant::now() }, x, y);
         match self.hit(x, y) {
             Hit::Tab(i) => {
+                self.blur();
                 self.cur = i;
-                self.edit.focused = false;
+                self.addr_focused = false;
                 self.update_title();
                 self.update_views();
             }
@@ -1845,22 +1910,31 @@ impl App {
             Hit::Fwd => self.go_fwd(),
             Hit::Reload => self.reload(),
             Hit::Addr => {
-                if !self.edit.focused {
+                if !self.addr_focused {
                     self.focus_addr();
                 } else {
-                    self.edit.all = false;
+                    let at = self.addr_char(x);
+                    if double {
+                        self.edit.select_word(at);
+                    } else {
+                        self.edit.place(at, m.shift);
+                    }
                 }
             }
             Hit::None => {
-                self.edit.focused = false;
-                if let Some(l) = self.hover_link.clone() {
-                    if host_of(&l) == "kamaitachi.local" && !self.tab().own {
+                self.addr_focused = false;
+                if self.click_field(x, y, m, double) {
+                } else if let Some(l) = self.hover_link.clone() {
+                    if l.starts_with(layout::PRESS) {
+                        self.press(&l);
+                    } else if host_of(&l) == "kamaitachi.local" && !self.tab().own {
                         // only pages made here may change settings
-                    } else if ctrl {
+                    } else if m.ctrl {
                         self.open_background(&l);
                     } else {
                         let c = self.cur;
-                        self.load(c, l, true);
+                        let from = host_of(&self.tab().url);
+                        self.load_from(c, l, true, from);
                     }
                 } else if let Some(f) = &self.tab().full {
                     full::focus(&f.ctl);
@@ -1935,13 +2009,15 @@ impl App {
         self.draw_page();
         let t1 = t0.elapsed();
         self.draw_chrome();
+        self.draw_menu();
         if std::env::var_os("HAYATE_FRAMES").is_some() {
             eprintln!("frame {:.2} ms (page {:.2})", t0.elapsed().as_secs_f64() * 1000.0, t1.as_secs_f64() * 1000.0);
         }
         let shoot = matches!(self.shot, Some((_, n)) if n >= 1);
         if shoot {
+            let busy = self.drive();
             if let Some((_, n)) = &mut self.shot {
-                *n += 1;
+                *n = if busy { 1 } else { *n + 1 };
             }
             // a couple of frames so late glyphs are in the atlas
             let wait = std::env::var("HAYATE_SHOT_WAIT_MS").ok().and_then(|v| v.parse::<u128>().ok()).unwrap_or(0);
@@ -1984,6 +2060,7 @@ impl App {
         let top = TOP * self.scale;
         let (w, h) = (self.w as f32, self.h as f32);
         let view = [0.0, top, w, h];
+        let live = self.live();
         let c = self.cur;
         let t = &self.tabs[c];
         if t.full_mode {
@@ -2017,8 +2094,33 @@ impl App {
             [(r.x * k).max(view[0]), (r.y * k + oy).max(view[1]), ((r.x + r.w) * k).min(view[2]), ((r.y + r.h) * k + oy).min(view[3])]
         };
         let gpu = &mut self.gpu;
+        let mut skip_text = false;
         for it in &dl.items {
             match *it {
+                Item::Field { field, clip, .. } => {
+                    let Some(l) = live.as_ref().filter(|l| l.field == field) else { continue };
+                    let cl = {
+                        let (a, b) = (clipf(clip), [l.clip.x * k, l.clip.y * k + oy, (l.clip.x + l.clip.w) * k, (l.clip.y + l.clip.h) * k + oy]);
+                        [a[0].max(b[0]), a[1].max(b[1]), a[2].min(b[2]), a[3].min(b[3])]
+                    };
+                    let mark = sk().accent;
+                    for m in &l.marked {
+                        gpu.rect(m.x * k, m.y * k + oy, m.w * k, m.h * k, [mark[0], mark[1], mark[2], 90], 0.0, cl);
+                    }
+                    for it in &l.list.items {
+                        if let Item::Text { start, len, color, .. } = *it {
+                            let cc = gpu::rgba(color, 1.0);
+                            for g in &l.list.glyphs[start as usize..(start + len) as usize] {
+                                gpu.glyph(g.face, g.size * k, g.id, g.x * k, g.y * k + oy, cc, cl);
+                            }
+                        }
+                    }
+                    if let Some(c) = l.caret {
+                        gpu.rect(c.x * k, c.y * k + oy, (c.w * k).max(1.0), c.h * k, dl.fields[field as usize].color, 0.0, cl);
+                    }
+                    skip_text = true;
+                }
+                Item::Text { .. } if std::mem::take(&mut skip_text) => {}
                 Item::Rect { r, color, radius, clip } => {
                     if r.y + r.h < y0 || r.y > y1 {
                         continue;
@@ -2056,6 +2158,10 @@ impl App {
                     }
                 }
             }
+        }
+        if let Some(l) = &live {
+            let r = l.clip;
+            gpu.ring((r.x - 4.0) * k, (r.y - 3.0) * k + oy, (r.w + 8.0) * k, (r.h + 6.0) * k, 2.0 * k, sk().accent, 3.0 * k, view);
         }
         // a thin scrollbar that only shows when the page is taller than the window
         if dl.height > vh + 1.0 {
@@ -2607,7 +2713,7 @@ impl App {
         let ax = 120.0;
         let aw = (rx - ax - 12.0).max(80.0);
         let ar = Rect::new(ax, TAB_H + 8.0, aw, 30.0);
-        let focused = self.edit.focused;
+        let focused = self.addr_focused;
         self.rect(ar, sk().field, 6.0);
         self.bevel(ar, false);
         if focused {
@@ -2626,22 +2732,19 @@ impl App {
         self.hits.push((ar, Hit::Addr));
         let ty = ar.y + 7.5;
         if focused {
-            let s: String = self.edit.text.iter().collect();
-            let before: String = self.edit.text[..self.edit.caret].iter().collect();
-            let (_, bw) = self.ui_text(&before, 13.0, 400, MONO, sk().text);
-            let (_, all_w) = self.ui_text(&s, 13.0, 400, MONO, sk().text);
-            if self.edit.all && !s.is_empty() {
+            let (shown, caret, marked) = self.addr_view(aw - 28.0);
+            if let Some((a, b)) = marked {
                 let ac = sk().accent;
-                self.rect(Rect::new(ar.x + 13.0, ar.y + 6.0, all_w + 2.0, 18.0), [ac[0], ac[1], ac[2], 64], 2.0);
+                self.rect(Rect::new(ar.x + 14.0 + a, ar.y + 6.0, b - a, 18.0), [ac[0], ac[1], ac[2], 64], 2.0);
             }
-            if s.is_empty() {
+            if shown.is_empty() {
                 self.label("SEARCH OR TYPE AN ADDRESS", ar.x + 14.0, ty + 1.0, 11.5, 500, sk().faint, aw - 28.0, MONO);
             } else {
-                self.label(&s, ar.x + 14.0, ty, 13.0, 400, sk().text, aw - 28.0, MONO);
+                self.label(&shown, ar.x + 14.0, ty, 13.0, 400, sk().text, aw - 28.0, MONO);
             }
-            if !self.edit.all {
+            if marked.is_none() {
                 let ac = sk().accent;
-                self.rect(Rect::new(ar.x + 14.0 + bw, ar.y + 6.0, 7.5, 18.0), [ac[0], ac[1], ac[2], 150], 1.0);
+                self.rect(Rect::new(ar.x + 14.0 + caret, ar.y + 6.0, 7.5, 18.0), [ac[0], ac[1], ac[2], 150], 1.0);
             }
         } else {
             let url = self.tab().url.clone();
