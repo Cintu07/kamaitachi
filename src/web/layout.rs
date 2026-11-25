@@ -217,6 +217,19 @@ fn font_of(s: &Style) -> Font {
     Font { family: s.font_family.clone(), size: s.font_size, weight: s.font_weight, italic: s.italic }
 }
 
+/// How far down a box on a line meets the line's baseline, given where its own is.
+fn hang(s: &Style, h: f32, own: f32, pb: &Pb) -> f32 {
+    let size = pb.para.runs.last().map_or(s.font_size, |r| r.font.size);
+    match s.valign {
+        2 => h / 2.0 + size * 0.25,
+        1 => (size * 0.9).min(h),
+        3 => h - size * 0.22,
+        4 => own - size * 0.2,
+        5 => own + size * 0.33,
+        _ => own,
+    }
+}
+
 fn is_replaced(tag: u32) -> bool {
     matches!(tag, t::img | t::svg | t::input | t::select | t::textarea | t::canvas | t::video | t::iframe)
 }
@@ -896,7 +909,7 @@ impl<'a> Layout<'a> {
                     if txt.is_empty() {
                         // an empty pseudo-element with a size (an icon drawn by css) holds its space
                         if let Some(w) = s.width.get(0.0).filter(|w| *w > 0.0) {
-                            pb.para.objs.push(Obj { pos: pb.para.text.len() as u32, w, h: s.height.get(0.0).unwrap_or(w) });
+                            pb.para.objs.push(Obj { pos: pb.para.text.len() as u32, w, h: s.height.get(0.0).unwrap_or(w), base: s.height.get(0.0).unwrap_or(w) });
                             pb.para.text.push(0xFFFC);
                             pb.objs.push(ObjKind::Blank);
                         }
@@ -964,7 +977,7 @@ impl<'a> Layout<'a> {
 
     /// Horizontal space inside a line, as an empty object.
     fn push_gap(&mut self, pb: &mut Pb, _s: &Style, w: f32, _link: u32) {
-        pb.para.objs.push(Obj { pos: pb.para.text.len() as u32, w, h: 0.0 });
+        pb.para.objs.push(Obj { pos: pb.para.text.len() as u32, w, h: 0.0, base: 0.0 });
         pb.para.text.push(0xFFFC);
         pb.objs.push(ObjKind::Blank);
     }
@@ -1067,7 +1080,7 @@ impl<'a> Layout<'a> {
         let Some(avail) = avail else {
             // measuring: only the width matters
             let (_, mx) = self.intrinsic(e);
-            pb.para.objs.push(Obj { pos, w: mx + m[1] + m[3], h: 1.0 });
+            pb.para.objs.push(Obj { pos, w: mx + m[1] + m[3], h: 1.0, base: 1.0 });
             pb.para.text.push(0xFFFC);
             pb.objs.push(ObjKind::Blank);
             return;
@@ -1076,7 +1089,8 @@ impl<'a> Layout<'a> {
             let (iw, ih) = self.replaced_size(e, s, avail, 0.0, 0.0);
             let id = self.img_id(e);
             if iw > 0.0 && ih > 0.0 {
-                pb.para.objs.push(Obj { pos, w: iw + m[1] + m[3], h: ih + m[0] + m[2] });
+                let h = ih + m[0] + m[2];
+                pb.para.objs.push(Obj { pos, w: iw + m[1] + m[3], h, base: hang(s, h, h, pb) });
                 pb.para.text.push(0xFFFC);
                 pb.objs.push(match id {
                     Some(id) => ObjKind::Img(id, iw, ih),
@@ -1101,9 +1115,27 @@ impl<'a> Layout<'a> {
             frag.hrefs.push(href);
             frag.links.push(Link { r: Rect::new(bo.x, bo.y, bo.w, bo.h), href: (frag.hrefs.len() - 1) as u32 });
         }
-        pb.para.objs.push(Obj { pos, w: bo.w + bo.ml + bo.mr, h: bo.h + bo.mt + bo.mb });
+        let h = bo.h + bo.mt + bo.mb;
+        // a box with words in it lines its last line up with the words around it
+        let words = frag.items.iter().rev().find_map(|it| match *it {
+            Item::Text { start, len, .. } if len > 0 => Some(frag.glyphs[(start + len) as usize - 1].y - (bo.y - bo.mt)),
+            _ => None,
+        });
+        let text_base = match tag {
+            // an empty box to type in lines up as if something were in it
+            t::input if words.is_none() && !self.ticked(e) => bo.mt + (bo.h + s.font_size * 0.7) / 2.0,
+            t::input if self.ticked(e) => h - bo.mb,
+            _ if s.overflow != 0 => h,
+            _ => words.filter(|w| (0.0..=h).contains(w)).unwrap_or(h),
+        };
+        pb.para.objs.push(Obj { pos, w: bo.w + bo.ml + bo.mr, h, base: hang(s, h, text_base, pb) });
         pb.para.text.push(0xFFFC);
         pb.objs.push(ObjKind::Boxed(frag));
+    }
+
+    /// A checkbox or radio button, which has no text.
+    fn ticked(&self, n: NodeId) -> bool {
+        self.dom.attr(n, t::type_).is_some_and(|ty| ty.eq_ignore_ascii_case("checkbox") || ty.eq_ignore_ascii_case("radio"))
     }
 
     fn link_obj(&mut self, pb: &mut Pb, link: u32) {
@@ -1140,7 +1172,7 @@ impl<'a> Layout<'a> {
         let natural = match tag {
             t::img => self.img_id(n).and_then(|id| self.img.size(id)),
             t::input | t::select | t::textarea => {
-                let lh = s.line_px();
+                let lh = self.control_line(s);
                 let ty = self.dom.attr(n, t::type_).unwrap_or("text").to_ascii_lowercase();
                 if matches!(ty.as_str(), "checkbox" | "radio") {
                     Some((13.0, 13.0))
@@ -1151,12 +1183,16 @@ impl<'a> Layout<'a> {
                 } else if tag == t::textarea {
                     Some((300.0, lh * 2.0))
                 } else {
-                    Some((150.0, lh))
+                    // the size attribute counts letters, at about half an em each
+                    let letters = self.dom.attr(n, t::size).and_then(|v| v.trim().parse::<f32>().ok()).filter(|v| *v >= 1.0);
+                    Some((letters.map_or(150.0, |l| l * s.font_size * 0.52), lh))
                 }
             }
             _ => None,
         };
-        let ratio = s.aspect.or_else(|| natural.filter(|(w, h)| *w > 0.0 && *h > 0.0).map(|(w, h)| w / h));
+        // a picture keeps its shape when one side changes; a control does not
+        let shaped = !matches!(tag, t::input | t::select | t::textarea);
+        let ratio = s.aspect.or_else(|| natural.filter(|(w, h)| shaped && *w > 0.0 && *h > 0.0).map(|(w, h)| w / h));
         let sw = s.width.get(cw).map(|v| if s.border_box { (v - pbh).max(0.0) } else { v });
         let sh = if s.height.pct() { None } else { s.height.get(0.0).map(|v| if s.border_box { (v - pbv).max(0.0) } else { v }) };
         let (mut w, mut h) = match (sw, sh) {
@@ -1187,6 +1223,16 @@ impl<'a> Layout<'a> {
             h = mx;
         }
         (w.max(0.0), h.max(0.0))
+    }
+
+    /// The height of a line in a form control. Without a line-height this is the font's
+    /// own, or the bottoms of letters like g would be cut off.
+    fn control_line(&mut self, s: &Style) -> f32 {
+        if s.line_height != 0.0 {
+            return s.line_px();
+        }
+        let p = Para { text: vec![b'x' as u16], runs: vec![Run { start: 0, len: 1, font: font_of(s), color: s.color, deco: 0, link: u32::MAX }], nowrap: true, ..Default::default() };
+        self.text.layout(&p, 1.0e4, 0.0, 0.0, None).height.ceil()
     }
 
     fn control_label(&self, n: NodeId) -> String {
@@ -2195,9 +2241,16 @@ impl<'a> Layout<'a> {
         let tag = self.dom.tag(n);
         if is_replaced(tag) {
             let pbv = p[0] + p[2] + s.bw[0] + s.bw[2];
-            let (w, _) = self.replaced_size(n, s, self.vw, pbh, pbv);
+            // a width in percent says nothing until the box around it has one, so that box is
+            // measured as if there were none, and this one can shrink to nothing
+            let w = if s.width.pct() {
+                let s = Style { width: L::Auto, ..s.clone() };
+                self.replaced_size(n, &s, self.vw, pbh, pbv).0
+            } else {
+                self.replaced_size(n, s, self.vw, pbh, pbv).0
+            };
             let v = clamp(w + pbh);
-            let mn = if s.max_w.pct() { 0.0 } else { v };
+            let mn = if s.max_w.pct() || s.width.pct() { 0.0 } else { v };
             return (mn, v);
         }
         let (mn, mx) = match s.display {
@@ -2483,6 +2536,24 @@ pub mod tests {
         assert_eq!(cells[2].y, 30.0);
         let a = rects(&dl, [0, 0, 255, 255])[0];
         assert_eq!((a.x, a.y), (180.0, 130.0));
+    }
+
+    /// A search box that fills its row: it must not push the row wider than the page, or
+    /// grow taller with its width the way a photo does.
+    #[test]
+    fn a_full_width_box_stays_in_its_row() {
+        let dl = render(
+            "<div class=row><div class=grow><input class=q value=x></div><button>go</button></div>",
+            ".row{display:flex;width:400px}.grow{flex:1 1 auto}.q{width:100%;box-sizing:border-box;border:1px solid red;background:#0f0}",
+            800.0,
+        );
+        let q = dl.items.iter().find_map(|it| match it {
+            Item::Rect { r, color: [0, 255, 0, 255], .. } => Some(*r),
+            _ => None,
+        });
+        let q = q.expect("the box");
+        assert!(q.x + q.w < 400.0, "{q:?}");
+        assert!(q.h < 40.0, "{q:?}");
     }
 
     #[test]

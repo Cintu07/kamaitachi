@@ -140,6 +140,8 @@ pub struct Obj {
     pub pos: u32,
     pub w: f32,
     pub h: f32,
+    /// from its top to the point that sits on the line; its whole height for an image
+    pub base: f32,
 }
 
 /// Inline content to break into lines.

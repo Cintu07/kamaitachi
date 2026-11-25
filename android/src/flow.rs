@@ -260,7 +260,8 @@ impl TextEngine for Flow {
             let (mut asc, mut desc, mut lead) = (0.0f32, 0.0f32, 0.0f32);
             for c in items {
                 if let Some(o) = c.obj {
-                    asc = asc.max(p.objs[o].h);
+                    asc = asc.max(p.objs[o].base);
+                    desc = desc.max(p.objs[o].h - p.objs[o].base);
                     continue;
                 }
                 let (face, size) = match gl.get(c.glyphs.start) {
@@ -293,7 +294,7 @@ impl TextEngine for Flow {
             for c in items {
                 xs.push(pen);
                 if let Some(o) = c.obj {
-                    po.objs[o] = (pen - x, top + baseline - p.objs[o].h);
+                    po.objs[o] = (pen - x, top + baseline - p.objs[o].base);
                 }
                 pen += c.adv;
             }
@@ -423,7 +424,7 @@ mod tests {
         let mut f = Flow::new();
         let mut p = para(&[("Article", 400)]);
         p.text.push(0xFFFC);
-        p.objs.push(hayate::web::Obj { pos: 7, w: 40.0, h: 10.0 });
+        p.objs.push(hayate::web::Obj { pos: 7, w: 40.0, h: 10.0, base: 10.0 });
         let out = f.layout(&p, 500.0, 0.0, 0.0, None);
         assert!(out.objs[0].0 > 40.0, "{:?}", out.objs);
     }
@@ -435,7 +436,7 @@ mod tests {
         let mut row = Para::default();
         for i in 0..3u32 {
             row.text.push(0xFFFC);
-            row.objs.push(hayate::web::Obj { pos: i, w: 50.0, h: 20.0 });
+            row.objs.push(hayate::web::Obj { pos: i, w: 50.0, h: 20.0, base: 20.0 });
         }
         let out = f.layout(&row, 500.0, 0.0, 0.0, None);
         assert_eq!(out.objs.iter().map(|o| o.0).collect::<Vec<_>>(), vec![0.0, 50.0, 100.0]);

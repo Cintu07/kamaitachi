@@ -60,8 +60,8 @@ details:not([open]) > :not(summary) { display: none; }
 summary { display: list-item; list-style-type: disclosure-closed; }
 input, select, textarea, button { font-size: 13.33px; font-family: system-ui; }
 input, textarea, select { border: 1px solid #767676; padding: 2px 4px; background-color: white; color: black; }
-input { width: 150px; }
 input[type=checkbox], input[type=radio] { width: 13px; height: 13px; padding: 0; margin: 3px 4px; }
+input[type=radio] { border-radius: 50%; }
 input[type=submit], input[type=button], input[type=reset], button {
   border: 1px solid #767676; padding: 2px 8px; background-color: #efefef; color: black; border-radius: 3px; width: auto; }
 textarea { width: 300px; height: 36px; }

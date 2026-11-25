@@ -218,6 +218,7 @@ impl IDWriteTextRenderer_Impl for Recorder_Impl {
 struct InlineBox {
     w: f32,
     h: f32,
+    base: f32,
 }
 
 impl IDWriteInlineObject_Impl for InlineBox_Impl {
@@ -225,8 +226,7 @@ impl IDWriteInlineObject_Impl for InlineBox_Impl {
         Ok(())
     }
     fn GetMetrics(&self) -> Result<DWRITE_INLINE_OBJECT_METRICS> {
-        // sits on the baseline, like an image
-        Ok(DWRITE_INLINE_OBJECT_METRICS { width: self.w, height: self.h, baseline: self.h, supportsSideways: FALSE })
+        Ok(DWRITE_INLINE_OBJECT_METRICS { width: self.w, height: self.h, baseline: self.base, supportsSideways: FALSE })
     }
     fn GetOverhangMetrics(&self) -> Result<DWRITE_OVERHANG_METRICS> {
         Ok(DWRITE_OVERHANG_METRICS::default())
@@ -415,7 +415,7 @@ impl Dw {
             }
             let mut objs = Vec::with_capacity(p.objs.len());
             for o in &p.objs {
-                let obj: IDWriteInlineObject = InlineBox { w: o.w, h: o.h }.into();
+                let obj: IDWriteInlineObject = InlineBox { w: o.w, h: o.h, base: o.base }.into();
                 let _ = layout.SetInlineObject(&obj, DWRITE_TEXT_RANGE { startPosition: o.pos, length: 1 });
                 objs.push(obj);
             }
