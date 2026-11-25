@@ -62,15 +62,19 @@ fn emit3(s: &mut String, name: &str, v: &[(u32, u32, u8)]) {
 }
 
 fn main() {
-    // layout recurses once per nested box; deep pages need more than the default 1 mb
-    println!("cargo:rustc-link-arg-bins=/STACK:16777216");
-    // the window browser's dlls load on first use, so the terminal client never maps them
-    for dll in ["d3d11.dll", "dxgi.dll", "dwrite.dll", "d3dcompiler_47.dll", "dwmapi.dll", "gdi32.dll", "user32.dll", "ole32.dll", "oleaut32.dll", "combase.dll", "shell32.dll"] {
-        println!("cargo:rustc-link-arg-bins=/DELAYLOAD:{dll}");
+    // the linker flags, the WebView2 loader and the icon are for the Windows programs;
+    // an Android build only wants the engine, and its tables below
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        // layout recurses once per nested box; deep pages need more than the default 1 mb
+        println!("cargo:rustc-link-arg-bins=/STACK:16777216");
+        // the window browser's dlls load on first use, so the terminal client never maps them
+        for dll in ["d3d11.dll", "dxgi.dll", "dwrite.dll", "d3dcompiler_47.dll", "dwmapi.dll", "gdi32.dll", "user32.dll", "ole32.dll", "oleaut32.dll", "combase.dll", "shell32.dll"] {
+            println!("cargo:rustc-link-arg-bins=/DELAYLOAD:{dll}");
+        }
+        println!("cargo:rustc-link-arg-bins=delayimp.lib");
+        embed_webview2_loader();
+        embed_icon();
     }
-    println!("cargo:rustc-link-arg-bins=delayimp.lib");
-    embed_webview2_loader();
-    embed_icon();
     for f in ["EAW_wide.txt", "Emoji.txt", "GBP.txt", "InCB.txt", "ZeroWidthGC.txt"] {
         println!("cargo:rerun-if-changed=data/ucd/{f}");
     }

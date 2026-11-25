@@ -1,16 +1,21 @@
 //! One keep-alive connection per host, on rustls. Connect and handshake block (once per
 //! session per host); after that the socket is non-blocking and tied to a winsock event,
 //! so the net thread can sleep in one wait across every socket and its command event.
+//! The event is Windows only. Elsewhere (the Android build) a socket armed for reading
+//! is just non-blocking, and only the blocking one-off requests are used.
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+#[cfg(windows)]
 use std::os::windows::io::AsRawSocket;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, RootCertStore};
+#[cfg(windows)]
 use windows_sys::Win32::Foundation::HANDLE;
+#[cfg(windows)]
 use windows_sys::Win32::Networking::WinSock::*;
 
 use crate::arena::{self, ArenaId, NET_CONN_BUDGET};
@@ -71,6 +76,7 @@ pub struct Conn {
     pub host: Host,
     sock: TcpStream,
     tls: Option<Box<ClientConnection>>,
+    #[cfg(windows)]
     event: WSAEVENT,
     armed: bool,
     pub busy: bool,
@@ -118,12 +124,14 @@ impl Conn {
             }
             tls = Some(Box::new(c));
         }
+        #[cfg(windows)]
         let event = unsafe { WSACreateEvent() };
         arena::add(ArenaId::Net, NET_CONN_BUDGET as isize);
         Ok(Conn {
             host,
             sock,
             tls,
+            #[cfg(windows)]
             event,
             armed: false,
             busy: false,
@@ -135,6 +143,7 @@ impl Conn {
 
     fn disarm(&mut self) -> std::io::Result<()> {
         if self.armed {
+            #[cfg(windows)]
             unsafe {
                 WSAEventSelect(self.sock.as_raw_socket() as SOCKET, 0, 0);
             }
@@ -158,17 +167,21 @@ impl Conn {
         }
         self.uses += 1;
         self.last_used = Instant::now();
+        #[cfg(windows)]
         unsafe {
             if WSAEventSelect(self.sock.as_raw_socket() as SOCKET, self.event, (FD_READ | FD_CLOSE) as i32) != 0 {
                 return Err(std::io::Error::last_os_error());
             }
         }
+        #[cfg(not(windows))]
+        self.sock.set_nonblocking(true)?;
         self.armed = true;
         Ok(())
     }
 
     /// Reads everything available right now, handing plaintext to `f`.
     pub fn read_ready(&mut self, f: &mut dyn FnMut(&[u8])) -> std::io::Result<ReadResult> {
+        #[cfg(windows)]
         unsafe {
             let mut ne: WSANETWORKEVENTS = core::mem::zeroed();
             WSAEnumNetworkEvents(self.sock.as_raw_socket() as SOCKET, self.event, &mut ne);
@@ -234,6 +247,7 @@ impl Drop for Conn {
             let mut s = &self.sock;
             let _ = c.write_tls(&mut s);
         }
+        #[cfg(windows)]
         unsafe {
             WSACloseEvent(self.event);
         }
@@ -311,6 +325,7 @@ pub fn full(host: Host, plain: Option<&str>, method: &str, target: &[u8], header
     }
 }
 
+#[cfg(windows)]
 impl Conn {
     /// The handle the net thread waits on for this socket.
     pub fn wait_handle(&self) -> HANDLE {

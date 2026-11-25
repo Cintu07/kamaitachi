@@ -61,8 +61,10 @@ pub fn start() {
     }
     install(Blocker::new(&[(omamori::STARTER, false)]));
     let _ = std::thread::Builder::new().name("filters".into()).spawn(|| {
-        let log = std::env::var("HAYATE_MEMLOG").is_ok();
-        let mb = || crate::sys::process_memory().private_bytes as f64 / 1048576.0;
+        #[cfg(windows)]
+        let (log, mb) = (std::env::var("HAYATE_MEMLOG").is_ok(), || crate::sys::process_memory().private_bytes as f64 / 1048576.0);
+        #[cfg(not(windows))]
+        let (log, mb) = (false, || 0.0);
         if log {
             eprintln!("filters: before {:.1}", mb());
         }
@@ -76,6 +78,7 @@ pub fn start() {
         }
         // reading the lists makes tens of thousands of small strings that are all freed
         // by now; ask the heap to hand those pages back instead of keeping them around
+        #[cfg(windows)]
         unsafe {
             use windows_sys::Win32::System::Memory::{GetProcessHeap, HeapCompact};
             HeapCompact(GetProcessHeap(), 0);

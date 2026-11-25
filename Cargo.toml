@@ -25,6 +25,12 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 webpki-roots = "1.0"
 # already linked by rustls; used directly for pkce sha-256 and randomness
 ring = "0.17"
+# the ad blocker, kept in its own repo so other programs can use it
+omamori = { git = "https://github.com/Cintu07/omamori", branch = "main" }
+
+# everything below is the Windows side: the window browser, the terminal client and
+# their system calls. The engine and networking above build for any target
+[target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Console",
@@ -66,8 +72,6 @@ windows = { version = "0.62", features = [
 windows-core = "0.62"
 # full-engine tabs: the WebView2 (Chromium) runtime that ships with windows, loaded on first use
 webview2-com = "0.39"
-# the ad blocker, kept in its own repo so other programs can use it
-omamori = { git = "https://github.com/Cintu07/omamori", branch = "main" }
 
 [profile.release]
 opt-level = 3
