@@ -26,6 +26,7 @@ pub mod mpv;
 #[cfg(windows)]
 pub mod bench;
 pub mod web;
+pub mod frame;
 #[cfg(windows)]
 pub mod gui;
 
