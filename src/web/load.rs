@@ -243,6 +243,25 @@ fn fetch_all(urls: &[String]) -> Vec<Option<(Url, String)>> {
     })
 }
 
+/// Whether a page is really a JavaScript application, so the light engine would show
+/// next to nothing: scripts and almost no text, a notice asking for JavaScript, or a
+/// bot check. Such pages go to the full engine instead.
+pub fn needs_js(doc: &Doc, dl: &super::DisplayList) -> bool {
+    let dom = &doc.dom;
+    let scripts = (0..dom.nodes.len() as u32).filter(|&n| dom.tag(n) == t::script).count();
+    let mut nos = String::new();
+    for n in 0..dom.nodes.len() as u32 {
+        if dom.tag(n) == t::noscript {
+            dom.text_content(n, &mut nos);
+        }
+    }
+    let nos = nos.to_lowercase();
+    let warns = nos.contains("javascript") && ["enable", "required", "disabled", "turn on", "needs", "requires", "please"].iter().any(|w| nos.contains(w));
+    let challenge = ["Just a moment", "Attention Required", "Verifying you are human", "Checking your browser"].iter().any(|t| dl.title.contains(t));
+    let glyphs = dl.glyphs.len();
+    (scripts > 0 && glyphs < 250) || (warns && glyphs < 4000) || challenge
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

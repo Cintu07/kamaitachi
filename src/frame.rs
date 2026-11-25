@@ -1,7 +1,12 @@
 //! Pixels on the cpu: boxes with rounded corners, rings, images and glyph masks,
-//! drawn into one buffer of 0RGB words. The Windows renderer (gui/soft.rs) and the
-//! Android app both draw with this; the only difference between them is how the
-//! buffer reaches the screen.
+//! drawn into one buffer of ARGB words, always opaque. The Windows renderer
+//! (gui/soft.rs) and the Android app both draw with this; the only difference between
+//! them is how the buffer reaches the screen.
+//!
+//! A frame can own its pixels (a Vec) or borrow them. Android draws straight into a
+//! Bitmap's memory that way, so the page is never held twice. A Bitmap is RGBA, the
+//! red and blue swapped from Windows, so the Android side swaps them in every color
+//! it hands over and the arithmetic here stays the same.
 
 use std::sync::Arc;
 
@@ -21,7 +26,7 @@ pub struct Image {
 impl Image {
     /// From premultiplied BGRA bytes, the way image decoders hand them over.
     pub fn from_bgra(w: u32, h: u32, bgra: &[u8]) -> Image {
-        let px: Vec<u32> = bgra.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+        let px: Vec<u32> = bgra.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c)).collect();
         Image { px: Arc::new(px), w, h }
     }
 }
@@ -41,6 +46,9 @@ impl Mask {
         Mask { w: 0, h: 0, left: 0, top: 0, a: Box::new([]) }
     }
 }
+
+/// The alpha byte every pixel carries. GDI ignores it; an Android Bitmap needs it.
+const OPAQUE: u32 = 0xFF00_0000;
 
 /// Premultiplied 0..255 channels.
 #[derive(Clone, Copy)]
@@ -62,7 +70,7 @@ fn over(d: u32, s: Px) -> u32 {
         return d;
     }
     if s.a >= 255 {
-        return (s.r << 16) | (s.g << 8) | s.b;
+        return OPAQUE | (s.r << 16) | (s.g << 8) | s.b;
     }
     let ia = 255 - s.a;
     let dr = (d >> 16) & 255;
@@ -71,7 +79,7 @@ fn over(d: u32, s: Px) -> u32 {
     let r = s.r + (dr * ia + 127) / 255;
     let g = s.g + (dg * ia + 127) / 255;
     let b = s.b + (db * ia + 127) / 255;
-    (r.min(255) << 16) | (g.min(255) << 8) | b.min(255)
+    OPAQUE | (r.min(255) << 16) | (g.min(255) << 8) | b.min(255)
 }
 
 #[inline]
@@ -120,13 +128,13 @@ pub fn text_lut() -> [u8; 256] {
 }
 
 #[derive(Default)]
-pub struct Frame {
+pub struct Frame<B = Vec<u32>> {
     pub w: u32,
     pub h: u32,
-    pub buf: Vec<u32>,
+    pub buf: B,
 }
 
-impl Frame {
+impl Frame<Vec<u32>> {
     pub fn resize(&mut self, w: u32, h: u32) {
         if w == self.w && h == self.h {
             return;
@@ -136,9 +144,16 @@ impl Frame {
         self.buf = vec![0; (w * h) as usize];
         self.buf.shrink_to_fit();
     }
+}
+
+impl<B: AsMut<[u32]>> Frame<B> {
+    /// Draws into pixels someone else owns, `w` by `h`.
+    pub fn over(buf: B, w: u32, h: u32) -> Frame<B> {
+        Frame { w, h, buf }
+    }
 
     pub fn fill(&mut self, c: [u8; 4]) {
-        self.buf.fill(((c[0] as u32) << 16) | ((c[1] as u32) << 8) | c[2] as u32);
+        self.buf.as_mut().fill(OPAQUE | ((c[0] as u32) << 16) | ((c[1] as u32) << 8) | c[2] as u32);
     }
 
     /// Integer pixel bounds of a box inside a clip and the frame.
@@ -163,10 +178,11 @@ impl Frame {
             let (sx, sy) = (x.round(), y.round());
             let (sw, sh) = ((x + w).round() - sx, (y + h).round() - sy);
             let Some((x0, y0, x1, y1)) = self.bounds(sx, sy, sw.max(1.0), sh.max(1.0), clip) else { return };
+            let buf = self.buf.as_mut();
             for yy in y0..y1 {
-                let row = &mut self.buf[yy * stride + x0..yy * stride + x1];
+                let row = &mut buf[yy * stride + x0..yy * stride + x1];
                 if s.a >= 255 {
-                    row.fill((s.r << 16) | (s.g << 8) | s.b);
+                    row.fill(OPAQUE | (s.r << 16) | (s.g << 8) | s.b);
                 } else {
                     for p in row {
                         *p = over(*p, s);
@@ -176,6 +192,7 @@ impl Frame {
             return;
         }
         let Some((x0, y0, x1, y1)) = self.bounds(x, y, w, h, clip) else { return };
+        let buf = self.buf.as_mut();
         let (cx, cy, hw, hh) = (x + w / 2.0, y + h / 2.0, w / 2.0, h / 2.0);
         for yy in y0..y1 {
             let py = yy as f32 + 0.5;
@@ -187,7 +204,7 @@ impl Frame {
                 if cov <= 0.0 {
                     continue;
                 }
-                let d = &mut self.buf[base + xx];
+                let d = &mut buf[base + xx];
                 *d = over(*d, if cov >= 1.0 { s } else { scale(s, (cov * 255.0) as u32) });
             }
         }
@@ -201,6 +218,7 @@ impl Frame {
         let r = radius.min(w / 2.0).min(h / 2.0).max(0.0);
         let s = premul(color);
         let Some((x0, y0, x1, y1)) = self.bounds(x, y, w, h, clip) else { return };
+        let buf = self.buf.as_mut();
         let (cx, cy, hw, hh) = (x + w / 2.0, y + h / 2.0, w / 2.0, h / 2.0);
         let ir = (r - width).max(0.0);
         let (ihw, ihh) = ((hw - width).max(0.0), (hh - width).max(0.0));
@@ -223,7 +241,7 @@ impl Frame {
                 if cov <= 0.0 {
                     continue;
                 }
-                let d = &mut self.buf[yy * stride + xx];
+                let d = &mut buf[yy * stride + xx];
                 *d = over(*d, scale(s, (cov * 255.0) as u32));
             }
         }
@@ -236,6 +254,7 @@ impl Frame {
         }
         let (x, y) = (x.round(), y.round());
         let Some((x0, y0, x1, y1)) = self.bounds(x, y, w.round().max(1.0), h.round().max(1.0), clip) else { return };
+        let buf = self.buf.as_mut();
         let a = (alpha.clamp(0.0, 1.0) * 255.0) as u32;
         let r = radius.min(w / 2.0).min(h / 2.0).max(0.0);
         let (cx, cy, hw, hh) = (x + w / 2.0, y + h / 2.0, w / 2.0, h / 2.0);
@@ -261,7 +280,7 @@ impl Frame {
                 if cov < 255 {
                     sp = scale(sp, cov);
                 }
-                let d = &mut self.buf[yy * stride + xx];
+                let d = &mut buf[yy * stride + xx];
                 *d = over(*d, sp);
             }
         }
@@ -282,6 +301,7 @@ impl Frame {
             return;
         }
         let s = Px { r: (color[0] * 255.0) as u32, g: (color[1] * 255.0) as u32, b: (color[2] * 255.0) as u32, a: (color[3] * 255.0) as u32 };
+        let buf = self.buf.as_mut();
         let stride = self.w as usize;
         let gw = g.w as i64;
         for yy in cy0..cy1 {
@@ -293,7 +313,7 @@ impl Frame {
                     continue;
                 }
                 let c = lut[cov as usize] as u32;
-                let d = &mut self.buf[drow + xx as usize];
+                let d = &mut buf[drow + xx as usize];
                 *d = over(*d, scale(s, c));
             }
         }

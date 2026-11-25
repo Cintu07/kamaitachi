@@ -19,7 +19,6 @@ use crate::url::Url;
 use crate::web::layout::{self, Images};
 use crate::web::load;
 use crate::web::style::{media_key, Cascade, Styles};
-use crate::web::dom::t as tg;
 use crate::web::{DisplayList, Font, Item, Para, Rect, Rgba, Run, TextEngine};
 use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2, ICoreWebView2Controller, ICoreWebView2Environment};
 use gpu::Clip;
@@ -549,7 +548,7 @@ fn load_page(url: String, vw: f32, vh: f32, dpr: f32, tab: u64, seq: u64, shared
         let mut images = Images::default();
         let dl = layout::layout(&doc.dom, &styles, &mut dw, &mut images, &doc.base, vw, vh);
         let final_url = if url == START { START.to_string() } else { doc.url.full() };
-        if url != START && needs_js(&doc, &dl) {
+        if url != START && load::needs_js(&doc, &dl) {
             shared.post(Msg::NeedsJs { tab, seq, url: final_url });
             return Ok(());
         }
@@ -604,21 +603,6 @@ fn load_page(url: String, vw: f32, vh: f32, dpr: f32, tab: u64, seq: u64, shared
 }
 
 /// Whether a page is a javascript application that shows nothing useful without it.
-fn needs_js(doc: &load::Doc, dl: &DisplayList) -> bool {
-    let dom = &doc.dom;
-    let scripts = (0..dom.nodes.len() as u32).filter(|&n| dom.tag(n) == tg::script).count();
-    let mut nos = String::new();
-    for n in 0..dom.nodes.len() as u32 {
-        if dom.tag(n) == tg::noscript {
-            dom.text_content(n, &mut nos);
-        }
-    }
-    let nos = nos.to_lowercase();
-    let warns = nos.contains("javascript") && ["enable", "required", "disabled", "turn on", "needs", "requires", "please"].iter().any(|w| nos.contains(w));
-    let challenge = ["Just a moment", "Attention Required", "Verifying you are human", "Checking your browser"].iter().any(|t| dl.title.contains(t));
-    let glyphs = dl.glyphs.len();
-    (scripts > 0 && glyphs < 250) || (warns && glyphs < 4000) || challenge
-}
 
 fn fetch_images(urls: &[String]) -> Vec<Option<Vec<u8>>> {
     let next = AtomicUsize::new(0);
