@@ -4,6 +4,7 @@
 //! builds there.
 
 pub mod conn;
+pub mod cookies;
 pub mod http;
 pub mod sse;
 #[cfg(windows)]

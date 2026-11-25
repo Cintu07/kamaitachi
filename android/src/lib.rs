@@ -88,7 +88,7 @@ fn open(url: &str, width_px: i32, dpr: f32) -> Page {
     let (vw, vh) = (width_px as f32 / dpr, 800.0);
     let (doc, needs) = match Url::parse(url) {
         Some(u) if block::is_danger(url) => (load::from_html(&notice("Stopped", "This site is on a malware or phishing list, so kamaitachi did not open it."), u, 1), false),
-        Some(u) => match load::load(&u) {
+        Some(u) => match load::load(&load::Request::get(u.clone())) {
             Ok(doc) => (doc, true),
             Err(e) => (load::from_html(&notice("Could not open this page", &e), u, 1), false),
         },

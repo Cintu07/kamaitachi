@@ -6,6 +6,7 @@ use std::sync::{Arc, OnceLock};
 use super::dom::{t, Dom};
 use super::parse::parse;
 use crate::net::conn::{full, Host};
+use crate::net::cookies::{self, Purpose};
 use crate::url::Url;
 
 /// What pages see: a chrome-compatible string, since many sites turn away browsers they
@@ -23,37 +24,88 @@ pub struct Fetched {
     pub body: Vec<u8>,
 }
 
-/// GET with redirects followed.
-pub fn fetch(url: &Url, accept: &str) -> Result<Fetched, String> {
+/// A page to open: typed, linked to, or the answer to a form.
+#[derive(Clone)]
+pub struct Request {
+    pub url: Url,
+    /// content type and body of a form's POST
+    pub body: Option<(String, Vec<u8>)>,
+    /// host of the page the link or form was on; empty when the address was typed
+    pub from: String,
+}
+
+impl Request {
+    pub fn get(url: Url) -> Request {
+        Request { url, body: None, from: String::new() }
+    }
+}
+
+/// Opens a page, following redirects, with the cookies its site has set.
+fn fetch_page(req: &Request) -> Result<Fetched, String> {
+    let accept = "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5";
+    exchange(&req.url, accept, &req.from, true, req.body.as_ref())
+}
+
+/// Something a page on `page_host` includes.
+fn fetch(url: &Url, accept: &str, page_host: &str) -> Result<Fetched, String> {
+    exchange(url, accept, page_host, false, None)
+}
+
+fn exchange(url: &Url, accept: &str, from: &str, page: bool, body: Option<&(String, Vec<u8>)>) -> Result<Fetched, String> {
     let mut u = url.clone();
-    for _ in 0..8 {
-        let host = Host::web(&u.host);
-        let headers: [(&str, &[u8]); 3] = [("Accept", accept.as_bytes()), ("Accept-Language", b"en-US,en;q=0.8"), ("User-Agent", UA.as_bytes())];
-        let (resp, body) = full(host, None, "GET", &u.target(), &headers, b"").map_err(|e| format!("{}: {e}", u.host))?;
+    let mut body = body;
+    let origin = format!("https://{from}");
+    let referer = format!("{origin}/");
+    for _ in 0..12 {
+        let why = Purpose { from, page, post: body.is_some() };
+        let cookie = cookies::header(&u.host, &u.path, why);
+        let mut headers: Vec<(&str, &[u8])> = vec![("Accept", accept.as_bytes()), ("Accept-Language", b"en-US,en;q=0.8"), ("User-Agent", UA.as_bytes())];
+        if let Some(c) = &cookie {
+            headers.push(("Cookie", c.as_bytes()));
+        }
+        if let Some((ty, _)) = body {
+            headers.push(("Content-Type", ty.as_bytes()));
+            if !from.is_empty() {
+                // what a server checks to know its own form sent this
+                headers.push(("Origin", origin.as_bytes()));
+                headers.push(("Referer", referer.as_bytes()));
+            }
+        }
+        let method = if body.is_some() { "POST" } else { "GET" };
+        let sent = body.map_or(&b""[..], |(_, b)| b);
+        let (resp, got) = full(Host::web(&u.host), None, method, &u.target(), &headers, sent).map_err(|e| format!("{}: {e}", u.host))?;
+        for line in &resp.cookies {
+            cookies::store(&String::from_utf8_lossy(line), &u.host, &u.path, why);
+        }
         if (300..400).contains(&resp.status) && !resp.location.is_empty() {
-            let loc = String::from_utf8_lossy(&resp.location).to_string();
-            u = u.join(&loc).ok_or_else(|| format!("redirect to {loc}"))?;
+            let to = String::from_utf8_lossy(&resp.location).to_string();
+            u = u.join(&to).ok_or_else(|| format!("redirect to {to}"))?;
+            // a form that worked sends you to a page to look at; only 307 and 308 ask for
+            // the form again
+            if !matches!(resp.status, 307 | 308) {
+                body = None;
+            }
             continue;
         }
         if resp.encoded {
             return Err(format!("{} sent a compressed body", u.host));
         }
-        if resp.status >= 400 && body.is_empty() {
+        if resp.status >= 400 && got.is_empty() {
             return Err(format!("{} answered {}", u.host, resp.status));
         }
-        return Ok(Fetched { url: u, kind: resp.ctype, body });
+        return Ok(Fetched { url: u, kind: resp.ctype, body: got });
     }
     Err("too many redirects".into())
 }
 
-/// Bytes of a subresource: an https url or a data: url.
-pub fn fetch_bytes(url: &str, accept: &str) -> Result<Vec<u8>, String> {
+/// Bytes of something a page on `page_host` includes: an https url or a data: url.
+pub fn fetch_bytes(url: &str, accept: &str, page_host: &str) -> Result<Vec<u8>, String> {
     if let Some(rest) = url.strip_prefix("data:") {
         let (meta, data) = rest.split_once(',').ok_or("bad data url")?;
         return if meta.ends_with(";base64") { base64(data).ok_or_else(|| "bad base64".to_string()) } else { Ok(crate::url::percent_decode(data).into_bytes()) };
     }
     let u = Url::parse(url).ok_or("bad url")?;
-    Ok(fetch(&u, accept)?.body)
+    Ok(fetch(&u, accept, page_host)?.body)
 }
 
 fn base64(s: &str) -> Option<Vec<u8>> {
@@ -127,8 +179,8 @@ pub struct Doc {
 }
 
 /// The page and every stylesheet it links, ready to cascade.
-pub fn load(url: &Url) -> Result<Doc, String> {
-    let f = fetch(url, "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5")?;
+pub fn load(req: &Request) -> Result<Doc, String> {
+    let f = fetch_page(req)?;
     let text = decode_text(&f.body);
     let html = if f.kind == 2 || (f.kind == 3 && !text.trim_start().starts_with('<')) {
         // plain text shows as preformatted text
@@ -186,7 +238,7 @@ pub fn from_html(html: &str, url: Url, kind: u8) -> Doc {
         });
     }
     let links: Vec<String> = srcs.iter().filter_map(|s| if let Src::Link(u) = s { Some(u.clone()) } else { None }).collect();
-    let fetched = fetch_all(&links);
+    let fetched = fetch_all(&links, &page_host);
     static UA: OnceLock<Arc<Sheet>> = OnceLock::new();
     static QUIRKS: OnceLock<Arc<Sheet>> = OnceLock::new();
     let mut sheets = vec![UA.get_or_init(|| Arc::new(parse_sheet_interned(UA_CSS))).clone()];
@@ -210,7 +262,7 @@ pub fn from_html(html: &str, url: Url, kind: u8) -> Doc {
         let sheet = parse_sheet(&absolutize(&css, &from));
         if !sheet.imports.is_empty() {
             let urls: Vec<String> = sheet.imports.iter().filter_map(|i| from.join(i)).map(|u| u.full()).collect();
-            for (u, css) in fetch_all(&urls).into_iter().flatten() {
+            for (u, css) in fetch_all(&urls, &page_host).into_iter().flatten() {
                 sheets.push(Arc::new(parse_sheet(&absolutize(&css, &u))));
             }
         }
@@ -227,14 +279,14 @@ pub fn from_html(html: &str, url: Url, kind: u8) -> Doc {
 }
 
 /// Fetches stylesheets in parallel, in order; None for each that failed.
-fn fetch_all(urls: &[String]) -> Vec<Option<(Url, String)>> {
+fn fetch_all(urls: &[String], page_host: &str) -> Vec<Option<(Url, String)>> {
     std::thread::scope(|sc| {
         let hs: Vec<_> = urls
             .iter()
             .map(|u| {
                 sc.spawn(move || {
                     let url = Url::parse(u)?;
-                    let f = fetch(&url, "text/css,*/*;q=0.1").ok()?;
+                    let f = fetch(&url, "text/css,*/*;q=0.1", page_host).ok()?;
                     Some((f.url, decode_text(&f.body)))
                 })
             })
@@ -268,8 +320,8 @@ mod tests {
 
     #[test]
     fn data_urls_and_css_urls() {
-        assert_eq!(fetch_bytes("data:text/plain;base64,aGk=", "*/*").unwrap(), b"hi");
-        assert_eq!(fetch_bytes("data:,a%20b", "*/*").unwrap(), b"a b");
+        assert_eq!(fetch_bytes("data:text/plain;base64,aGk=", "*/*", "").unwrap(), b"hi");
+        assert_eq!(fetch_bytes("data:,a%20b", "*/*", "").unwrap(), b"a b");
         let u = Url::parse("https://cdn.example.com/css/site.css").unwrap();
         assert_eq!(absolutize("a{background:url(../img/x.png)} b{background:url('data:x')}", &u), "a{background:url(\"https://cdn.example.com/img/x.png\")} b{background:url('data:x')}");
     }

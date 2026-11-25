@@ -15,6 +15,7 @@ pub mod skin;
 pub mod soft;
 pub mod text;
 
+use crate::net::cookies;
 use crate::url::Url;
 use crate::web::layout::{self, Images};
 use crate::web::load;
@@ -124,6 +125,8 @@ struct Tab {
     used: Instant,
     /// ads and trackers stopped on this page
     blocked: u32,
+    /// the page was made here (the den, a warning), so its links may change settings
+    own: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -231,6 +234,7 @@ pub fn run(urls: Vec<String>) -> Result<(), String> {
         // the full engine needs a single-threaded apartment on this thread
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         crate::web::block::start();
+        load_cookies();
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let inst = GetModuleHandleW(None).map_err(|e| e.to_string())?;
         let class = w!("hayate.window");
@@ -375,6 +379,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         match msg {
             WM_DESTROY => {
                 app.stats.save();
+                save_cookies();
                 PostQuitMessage(0);
                 LRESULT(0)
             }
@@ -526,6 +531,25 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
     }
 }
 
+/// Where sign-ins are kept between runs, readable only by this Windows user.
+fn cookie_file() -> std::path::PathBuf {
+    wall_dir().join("cookies")
+}
+
+fn load_cookies() {
+    if let Some(b) = std::fs::read(cookie_file()).ok().and_then(|b| crate::sys::unseal(&b)) {
+        cookies::restore(&String::from_utf8_lossy(&b));
+    }
+}
+
+fn save_cookies() {
+    if let Some(text) = cookies::unsaved()
+        && let Some(b) = crate::sys::seal(text.as_bytes())
+    {
+        let _ = std::fs::write(cookie_file(), b);
+    }
+}
+
 fn private_mb() -> f32 {
     crate::sys::process_memory().private_bytes as f32 / (1024.0 * 1024.0)
 }
@@ -541,7 +565,7 @@ fn load_page(url: String, vw: f32, vh: f32, dpr: f32, tab: u64, seq: u64, shared
             load::from_html(START_HTML, Url { host: "hayate".into(), path: "/start".into() }, 1)
         } else {
             let u = Url::parse(&url).ok_or_else(|| format!("not an address: {url}"))?;
-            load::load(&u)?
+            load::load(&load::Request::get(u))?
         };
         let mut dw = Dw::new();
         let styles = Cascade { dom: &doc.dom, sheets: &doc.sheets, vw, vh }.run();
@@ -570,7 +594,7 @@ fn load_page(url: String, vw: f32, vh: f32, dpr: f32, tab: u64, seq: u64, shared
                 .collect(),
             None => urls,
         };
-        let bytes = fetch_images(&urls);
+        let bytes = fetch_images(&urls, &doc.url.host);
         let mut any = false;
         for (i, b) in bytes.iter().enumerate() {
             if let Some(b) = b
@@ -604,7 +628,7 @@ fn load_page(url: String, vw: f32, vh: f32, dpr: f32, tab: u64, seq: u64, shared
 
 /// Whether a page is a javascript application that shows nothing useful without it.
 
-fn fetch_images(urls: &[String]) -> Vec<Option<Vec<u8>>> {
+fn fetch_images(urls: &[String], page_host: &str) -> Vec<Option<Vec<u8>>> {
     let next = AtomicUsize::new(0);
     let out: Mutex<Vec<Option<Vec<u8>>>> = Mutex::new(vec![None; urls.len()]);
     std::thread::scope(|sc| {
@@ -616,7 +640,7 @@ fn fetch_images(urls: &[String]) -> Vec<Option<Vec<u8>>> {
                     if u.is_empty() || u.ends_with(".svg") || u.contains(".svg?") {
                         continue;
                     }
-                    if let Ok(b) = load::fetch_bytes(u, "image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8")
+                    if let Ok(b) = load::fetch_bytes(u, "image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8", page_host)
                         && b.len() < 40 << 20
                     {
                         out.lock().unwrap_or_else(|e| e.into_inner())[i] = Some(b);
@@ -744,6 +768,7 @@ h2 {{ font-size: 13px; font-family: "Cascadia Mono", Consolas, monospace; font-w
 <div class="book">{stamps}</div>
 <h2>// SKINS · CTRL+SHIFT+K TO CYCLE</h2>
 <div class="skins">{skins}</div>
+{kept}
 </main></body></html>"#,
         bg = hex(s.panel),
         text = hex(s.text),
@@ -760,6 +785,10 @@ h2 {{ font-size: 13px; font-family: "Cascadia Mono", Consolas, monospace; font-w
         days = st.days,
         got = st.stamps.len(),
         all = play::STAMPS.len(),
+        kept = match cookies::sites() {
+            0 => String::new(),
+            n => format!(r#"<p class="small" style="margin-top:42px">sign-ins and settings kept for {n} site{} · <a href="https://kamaitachi.local/forget">forget all</a></p>"#, if n == 1 { "" } else { "s" }),
+        },
     )
 }
 
@@ -859,7 +888,7 @@ impl App {
     fn new_tab(&mut self, url: &str) {
         let id = self.next_id;
         self.next_id += 1;
-        self.tabs.push(Tab { id, url: String::new(), title: "New tab".into(), page: None, dl: None, scroll: 0.0, target: 0.0, back: Vec::new(), fwd: Vec::new(), loading: false, seq: 0, tex: HashMap::new(), restore: None, vw: 0.0, full_mode: false, full: None, pending: None, requested: false, parked: false, picture: None, picture_img: None, shot_at: None, used: Instant::now(), blocked: 0 });
+        self.tabs.push(Tab { id, url: String::new(), title: "New tab".into(), page: None, dl: None, scroll: 0.0, target: 0.0, back: Vec::new(), fwd: Vec::new(), loading: false, seq: 0, tex: HashMap::new(), restore: None, vw: 0.0, full_mode: false, full: None, pending: None, requested: false, parked: false, picture: None, picture_img: None, shot_at: None, used: Instant::now(), blocked: 0, own: false });
         self.cur = self.tabs.len() - 1;
         self.load(self.cur, url.to_string(), false);
     }
@@ -967,6 +996,7 @@ impl App {
         let t = &mut self.tabs[i];
         t.title = title.into();
         t.dl = Some(dl);
+        t.own = true;
         t.page = None;
         t.loading = false;
         t.scroll = 0.0;
@@ -1286,6 +1316,11 @@ impl App {
                 }
                 return self.show_den(i, false);
             }
+            if rest == "forget" {
+                cookies::forget();
+                save_cookies();
+                return self.show_den(i, false);
+            }
             if let Some(q) = rest.strip_prefix("proceed?u=") {
                 let target = crate::url::percent_decode(q);
                 crate::web::block::allow(&host_of(&target));
@@ -1423,6 +1458,7 @@ impl App {
                     t.title = if dl.title.is_empty() { url.trim_start_matches("https://").to_string() } else { dl.title.clone() };
                     t.url = url;
                     t.dl = Some(dl);
+                    t.own = false;
                     t.tex.clear();
                     t.page = None;
                     let y = t.restore.take().unwrap_or(0.0);
@@ -1471,6 +1507,8 @@ impl App {
                     t.dl = Some(dl);
                     t.page = Some(page);
                     t.loading = false;
+                    save_cookies();
+                    let t = &mut self.tabs[i];
                     // the window may have changed size while this page loaded
                     if i == self.cur && (t.vw - self.view_w()).abs() > 0.5 {
                         self.relayout_due = true;
@@ -1816,7 +1854,9 @@ impl App {
             Hit::None => {
                 self.edit.focused = false;
                 if let Some(l) = self.hover_link.clone() {
-                    if ctrl {
+                    if host_of(&l) == "kamaitachi.local" && !self.tab().own {
+                        // only pages made here may change settings
+                    } else if ctrl {
                         self.open_background(&l);
                     } else {
                         let c = self.cur;

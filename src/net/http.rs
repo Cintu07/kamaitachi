@@ -53,6 +53,8 @@ enum St {
 }
 
 const LINE_MAX: usize = 1024;
+/// Header lines past this are dropped.
+const LONG_MAX: usize = 16 * 1024;
 
 /// One response being parsed. Fixed size; reusable for the next response on the
 /// same keep-alive connection via `reset`.
@@ -61,6 +63,8 @@ pub struct Response {
     line: [u8; LINE_MAX],
     line_len: usize,
     line_overflow: bool,
+    /// the whole of a header line too long for `line`; empty for every other line
+    long: Vec<u8>,
     rem: u64,
     chunk_digits: u8,
     pub status: u16,
@@ -78,6 +82,8 @@ pub struct Response {
     pub encoded: bool,
     /// the Location header of a redirect
     pub location: Vec<u8>,
+    /// each Set-Cookie header
+    pub cookies: Vec<Vec<u8>>,
     pub head_done: bool,
     no_body: bool,
 }
@@ -95,6 +101,7 @@ impl Response {
             line: [0; LINE_MAX],
             line_len: 0,
             line_overflow: false,
+            long: Vec::new(),
             rem: 0,
             chunk_digits: 0,
             status: 0,
@@ -107,6 +114,7 @@ impl Response {
             ctype: 0,
             encoded: false,
             location: Vec::new(),
+            cookies: Vec::new(),
             head_done: false,
             no_body: false,
         }
@@ -136,14 +144,22 @@ impl Response {
                 self.line[self.line_len] = b;
                 self.line_len += 1;
             } else {
-                self.line_overflow = true;
+                // a sign-in redirect or a cookie can be a few kilobytes
+                if self.long.is_empty() {
+                    self.long.extend_from_slice(&self.line);
+                }
+                self.line_overflow = self.long.len() >= LONG_MAX;
+                if !self.line_overflow {
+                    self.long.push(b);
+                }
             }
         }
         None
     }
 
     fn header(&mut self) {
-        let line = &self.line[..self.line_len];
+        let long = std::mem::take(&mut self.long);
+        let line = if long.is_empty() { &self.line[..self.line_len] } else { long.trim_ascii_end() };
         let Some(colon) = line.iter().position(|&b| b == b':') else { return };
         let name = &line[..colon];
         let val = trim(&line[colon + 1..]);
@@ -171,6 +187,8 @@ impl Response {
             self.encoded = !val.eq_ignore_ascii_case(b"identity");
         } else if is("location") {
             self.location = val.to_vec();
+        } else if is("set-cookie") && self.cookies.len() < 100 {
+            self.cookies.push(val.to_vec());
         }
     }
 
@@ -228,6 +246,7 @@ impl Response {
                         }
                         self.line_len = 0;
                         self.line_overflow = false;
+                        self.long.clear();
                     }
                 }
                 St::Len => {
@@ -406,6 +425,19 @@ mod tests {
         assert_eq!(body, b"hello");
         assert_eq!(used, raw.len() - 5);
         assert_eq!(r.rate_reset, 1_700_000_000);
+    }
+
+    #[test]
+    fn cookies_and_long_headers() {
+        let to = format!("/back?state={}", "x".repeat(3000));
+        let raw = format!("HTTP/1.1 302 Found\r\nSet-Cookie: a=1; Path=/\r\nX-Junk: {}\r\nLocation: {to}\r\nset-cookie: b=2\r\nContent-Length: 0\r\n\r\n", "y".repeat(40_000));
+        for size in [1, 7, 1024, raw.len()] {
+            let chunks: Vec<&[u8]> = raw.as_bytes().chunks(size).collect();
+            let (r, _, _) = parse(&chunks);
+            assert!(r.done());
+            assert_eq!(r.location, to.as_bytes());
+            assert_eq!(r.cookies, [b"a=1; Path=/".to_vec(), b"b=2".to_vec()]);
+        }
     }
 
     #[test]

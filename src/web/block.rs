@@ -104,7 +104,7 @@ pub fn build() -> Blocker {
     use std::io::BufRead;
     let d = dir();
     let _ = std::fs::create_dir_all(&d);
-    let fetch = |u: &str| super::load::fetch_bytes(u, "text/plain").ok().map(|b| String::from_utf8_lossy(&b).into_owned());
+    let fetch = |u: &str| super::load::fetch_bytes(u, "text/plain", "").ok().map(|b| String::from_utf8_lossy(&b).into_owned());
     let mut bd = omamori::Builder::new();
     bd.add(omamori::STARTER, false);
     for (file, url, danger) in LISTS {

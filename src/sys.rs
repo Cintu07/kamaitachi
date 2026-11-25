@@ -591,6 +591,37 @@ pub fn cpu_cycles() -> u64 {
     n
 }
 
+/// Encrypts bytes so that only this Windows account, on this machine, can read them.
+pub fn seal(b: &[u8]) -> Option<Vec<u8>> {
+    protect(b, true)
+}
+
+/// The bytes [`seal`] was given.
+pub fn unseal(b: &[u8]) -> Option<Vec<u8>> {
+    protect(b, false)
+}
+
+fn protect(b: &[u8], seal: bool) -> Option<Vec<u8>> {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Cryptography::*;
+    let input = CRYPT_INTEGER_BLOB { cbData: b.len() as u32, pbData: b.as_ptr() as *mut u8 };
+    let mut out = CRYPT_INTEGER_BLOB { cbData: 0, pbData: core::ptr::null_mut() };
+    let (none, quiet) = (core::ptr::null(), CRYPTPROTECT_UI_FORBIDDEN);
+    unsafe {
+        let ok = if seal {
+            CryptProtectData(&input, none, none as _, none as _, none as _, quiet, &mut out)
+        } else {
+            CryptUnprotectData(&input, core::ptr::null_mut(), none as _, none as _, none as _, quiet, &mut out)
+        };
+        if ok == 0 {
+            return None;
+        }
+        let v = core::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec();
+        LocalFree(out.pbData as _);
+        Some(v)
+    }
+}
+
 pub fn now_unix() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
