@@ -704,7 +704,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
             name: "cpu while idle",
             limit: "0%".into(),
             got: format!("{} µs in {} s", field("idle_cpu_us"), idle_secs),
-            pass: Some(field("idle_cpu_us") < 2_000),
+            // cpu time is sampled in 15.6 ms ticks, and on a shared runner one can land on
+            // an idle process. here it has to be none
+            pass: Some(field("idle_cpu_us") < if timed { 2_000 } else { 16_000 }),
         },
         Row { name: "heap allocs, 1000 steady frames", limit: "0".into(), got: allocs.to_string(), pass: Some(allocs == 0) },
         Row { name: "streamed token to screen, p99", limit: "1 ms".into(), got: ms(pct(&mut token_us, 99) as u64), pass: Some(!token_us.is_empty() && (!timed || pct(&mut token_us, 99) <= 1000)) },
