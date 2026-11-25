@@ -144,9 +144,12 @@ impl App {
         let mem = if self.full_mb > 0.5 { format!("{:.0} + {:.0} MB", mine, self.full_mb) } else { format!("{mine:.1} MB") };
         let mem_w = self.measure(&mem, 13.0, false, TYPEWRITER);
         let meter = Rect::new(w - 14.0 - 44.0, TAB_H + 19.0, 44.0, 9.0);
-        let mem_x = meter.x - 10.0 - mem_w;
-        let mut rx = mem_x;
-        let cut = (on_page && blocked > 0).then(|| format!("{blocked} cut"));
+        // in a narrow window the address keeps its room: the meter goes first, then the
+        // number, then the count of what was blocked
+        let (show_meter, show_mem, show_cut) = (w >= 640.0, w >= 540.0, w >= 720.0);
+        let mem_x = if show_meter { meter.x - 10.0 - mem_w } else { w - 14.0 - mem_w };
+        let mut rx = if show_mem { mem_x } else { w + 4.0 };
+        let cut = (on_page && blocked > 0 && show_cut).then(|| format!("{blocked} cut"));
         let mut cut_x = 0.0;
         if let Some(t) = &cut {
             let cw = self.measure(t, 13.0, false, TYPEWRITER);
@@ -249,10 +252,12 @@ impl App {
             // memory: a small box filled with hatching as the budget is used up
             let used = (total / budget).clamp(0.02, 1.0);
             let hot = used > 0.8;
-            c.sketch_box(meter.x, meter.y, meter.w, meter.h, Pencil { width: 1.0, ..gp }, 170);
-            let fill = [(meter.x, meter.y), (meter.x + meter.w * used, meter.y), (meter.x + meter.w * used, meter.y + meter.h), (meter.x, meter.y + meter.h)];
-            let hp = Pencil { width: 1.1, color: if hot { RUST } else { s.ink }, alpha: 0.85, wobble: 0.2 };
-            c.hatch(&fill, 60.0, 2.6, hp, 171);
+            if show_meter {
+                c.sketch_box(meter.x, meter.y, meter.w, meter.h, Pencil { width: 1.0, ..gp }, 170);
+                let fill = [(meter.x, meter.y), (meter.x + meter.w * used, meter.y), (meter.x + meter.w * used, meter.y + meter.h), (meter.x, meter.y + meter.h)];
+                let hp = Pencil { width: 1.1, color: if hot { RUST } else { s.ink }, alpha: 0.85, wobble: 0.2 };
+                c.hatch(&fill, 60.0, 2.6, hp, 171);
+            }
             // the toolbar's lower edge, and a loading line drawn along it
             c.pencil(&[(-3.0, TOP - 1.0), (w + 3.0, TOP - 1.4)], Pencil { alpha: 0.6, ..gp }, 180);
             if loading {
@@ -329,7 +334,9 @@ impl App {
         if let Some(t) = &cut {
             self.words(t, cut_x, TAB_H + 15.0, 13.0, false, TYPEWRITER, s.ink, 200.0);
         }
-        self.words(&mem, mem_x, TAB_H + 15.0, 13.0, false, TYPEWRITER, s.text, mem_w + 4.0);
+        if show_mem {
+            self.words(&mem, mem_x, TAB_H + 15.0, 13.0, false, TYPEWRITER, s.text, mem_w + 4.0);
+        }
 
         // ---- slips of paper on top of everything
         if let Some((msg, _)) = self.toast.clone() {
