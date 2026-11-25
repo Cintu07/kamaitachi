@@ -8,13 +8,14 @@ kamaitachi is a web browser for Windows that tries to use as little memory as it
 
 ![a Wikipedia article in the light engine](docs/page.jpg)
 
-These are private bytes, measured on a Windows 11 laptop in November 2026.
+These are private bytes on a Windows 11 laptop in November 2026, eight seconds after starting, with blocking on and a window of 1924 by 1055 pixels. The frame itself is 7.7 MB of each number. The YouTube row is older and was measured with a smaller frame and before the paper skin.
 
 | page | engine | memory |
 |---|---|---|
-| new tab | own | 7.3 MB |
-| Hacker News | own | 9 MB |
-| a long Wikipedia article | own | 34 MB |
+| new tab | own | 16.6 MB |
+| Hacker News | own | 17.9 MB |
+| a short Wikipedia article (Kamaitachi) | own | 24.6 MB |
+| a very long one (World War II) | own | 69 MB |
 | a YouTube video page | Chromium | 9 MB + 298 MB |
 
 The budget is 500 MB for both. When the total gets close, the tab you looked at longest ago is parked. Its Chromium process exits and the tab keeps a screenshot, so clicking it brings the page back.
@@ -35,7 +36,7 @@ It installs for your user only, adds kamaitachi to the Start menu and lists it u
 
 There is an Android build too, `kamaitachi.apk` (1.6 MB) on the releases page. It needs Android 11 or newer on a 64-bit ARM phone. Open the download on the phone. Android will ask once whether your browser may install apps.
 
-Pages go through the same engine and ad blocker as on Windows, with text drawn from the phone's own fonts. Sites that need JavaScript open in the phone's System WebView, and the lite / full switch in the toolbar moves a site between the two. Images are not drawn yet. Grey boxes show where they go.
+Pages go through the same engine and ad blocker as on Windows, with text drawn from the phone's own fonts. Sites that need JavaScript open in the phone's System WebView, and the lite / full switch in the toolbar moves a site between the two. Images are not drawn yet. Grey boxes show where they go. The app has not been tested on a phone, so treat it as an experiment.
 
 `android/build.sh` builds it with the Android SDK, NDK and cargo-ndk. Gradle is not needed.
 
@@ -80,7 +81,7 @@ Drag an image onto the window and it becomes the new tab's wallpaper.
 
 ## skins and the den
 
-joseon is the default look. The chrome and the new tab are a sheet of paper, drawn in graphite and cobalt ink with a wash of sky blue, and set in CMU Typewriter and CMU Serif. The pencil is drawn by the cpu into the frame, in the spirit of p5.brush but without a browser engine under it. It costs about 4 ms a frame at 1080p, plus 64 KB of paper grain. The weasel, the stamps and the season doodles are drawings kept as 65 KB of grayscale masks that the skin colors when they are printed. night is the older dark one. Three more open up as the blocker works, wave once 100 ads and trackers are blocked, then neon at 1,000 and gameboy at 10,000.
+joseon is the default look. The chrome and the new tab are a sheet of paper, drawn in graphite and cobalt ink with a wash of sky blue, and set in CMU Typewriter and CMU Serif. The pencil is drawn by the cpu into the frame, in the spirit of p5.brush but without a browser engine under it. A frame took 3.4 to 5.7 ms on the pages in the table above, plus 64 KB of paper grain. The weasel, the stamps and the season doodles are drawings kept as 65 KB of grayscale masks that the skin colors when they are printed. night is the older dark one. Three more open up as the blocker works, wave once 100 ads and trackers are blocked, then neon at 1,000 and gameboy at 10,000.
 
 A small weasel in the tab strip eats whatever gets blocked, and it changes form at 100, 1,000, 10,000 and 100,000. Click it to open the den, a page with the counts, ten stamps to collect and the skins you have. The counts stay in `%APPDATA%\hayate\stats.txt` and never leave the machine. There are no streaks to keep up and no notifications. All of it has to fit in 1 MB, and a test checks that.
 
