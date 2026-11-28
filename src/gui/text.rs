@@ -57,10 +57,22 @@ pub fn factory() -> IDWriteFactory2 {
 /// Unicode, the TeX fonts, under the SIL Open Font License (assets/fonts/OFL.txt).
 pub const TYPEWRITER: &str = "CMU Typewriter Text";
 pub const SERIF: &str = "CMU Serif";
+/// the interface: a clear sans with a little editorial warmth
+pub const SANS: &str = "Instrument Sans";
+/// capitals after carved inscriptions, for the name and headings
+pub const CARVED: &str = "Cinzel";
 
 /// Two faces, the regular typewriter and the upright serif. They ship inside the exe
 /// as woff2, 55 KB for both, and DirectWrite unpacks each into memory once.
-const OWN_FONTS: [&[u8]; 2] = [include_bytes!("../../assets/fonts/cmuntt.woff2"), include_bytes!("../../assets/fonts/cmunrm.woff2")];
+const OWN_FONTS: [&[u8]; 7] = [
+    include_bytes!("../../assets/fonts/cmuntt.woff2"),
+    include_bytes!("../../assets/fonts/cmunrm.woff2"),
+    include_bytes!("../../assets/fonts/instrument-400.woff2"),
+    include_bytes!("../../assets/fonts/instrument-500.woff2"),
+    include_bytes!("../../assets/fonts/instrument-600.woff2"),
+    include_bytes!("../../assets/fonts/cinzel-400.woff2"),
+    include_bytes!("../../assets/fonts/cinzel-700.woff2"),
+];
 
 struct SendCollection(IDWriteFontCollection);
 unsafe impl Send for SendCollection {}
@@ -316,7 +328,7 @@ impl Dw {
                 _ => &[],
             };
             if cands.is_empty() {
-                if (name == TYPEWRITER || name == SERIF) && self.own.is_some() {
+                if [TYPEWRITER, SERIF, SANS, CARVED].contains(&name) && self.own.is_some() {
                     pick = Some(name.to_string());
                     break;
                 }
