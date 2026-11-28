@@ -54,7 +54,7 @@ const SETTINGS: &str = "https://kamaitachi.local/settings";
 const MONO: &str = "Cascadia Mono, Consolas, monospace";
 /// the browser's name: kamaitachi, the sickle-weasel that rides whirlwinds
 const BRAND: &str = "kamaitachi";
-const UI_FONT: &str = "Segoe UI Variable Text, Segoe UI, sans-serif";
+const UI_FONT: &str = "Instrument Sans, Segoe UI Variable Text, Segoe UI, sans-serif";
 const ICON_FONT: &str = "Segoe Fluent Icons, Segoe MDL2 Assets";
 
 const START_HTML: &str = include_str!("start.html");
@@ -389,6 +389,7 @@ pub fn run(urls: Vec<String>) -> Result<(), String> {
         });
         APP = Box::into_raw(app);
         let app = &mut *APP;
+        skin::glass_possible(matches!(app.gpu, Painter::Soft(_)));
         app.zoom = prefs::get().zoom as f32 / 100.0;
         app.apply_prefs();
         app.sync_size();
@@ -969,7 +970,9 @@ impl App {
         t.title = title.into();
         t.dl = Some(dl);
         t.own = true;
-        t.page = None;
+        // kept, so its boxes and lists work and it is laid out again when the window changes
+        t.page = Some(Box::new(Page { doc, styles, images }));
+        t.vw = vw;
         t.loading = false;
         t.scroll = 0.0;
         t.target = 0.0;
@@ -1345,17 +1348,18 @@ impl App {
             }
             if let Some(q) = rest.strip_prefix("settings") {
                 let find = q.strip_prefix("?q=").map(crate::url::percent_decode).unwrap_or_default();
-                return self.show_settings(i, &find, push);
+                let section = q.strip_prefix("?s=").unwrap_or("look").to_string();
+                return self.show_settings(i, &find, &section, push);
             }
             if let Some(q) = rest.strip_prefix("set?") {
-                self.take_setting(q);
-                return self.show_settings(i, "", false);
+                let section = self.take_setting(q);
+                return self.show_settings(i, "", &section, false);
             }
             if rest == "forget" {
                 cookies::forget();
                 save_cookies();
                 self.say("signed out of every site");
-                return self.show_settings(i, "", false);
+                return self.show_settings(i, "", "privacy", false);
             }
             if let Some(q) = rest.strip_prefix("proceed?u=") {
                 let target = crate::url::percent_decode(q);
@@ -1759,7 +1763,7 @@ impl App {
                 }
                 VK_OEM_COMMA => {
                     let c = self.cur;
-                    self.show_settings(c, "", true);
+                    self.show_settings(c, "", "look", true);
                 }
                 VK_T => {
                     self.new_tab(START);
@@ -1885,11 +1889,11 @@ impl App {
             Hit::Settings => {
                 let c = self.cur;
                 if self.tab().url == START {
-                    self.show_settings(c, "", true);
+                    self.show_settings(c, "", "look", true);
                 } else {
                     self.new_tab(START);
                     let c = self.cur;
-                    self.show_settings(c, "", false);
+                    self.show_settings(c, "", "look", false);
                 }
             }
             Hit::Mute(i) => {

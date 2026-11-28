@@ -339,7 +339,7 @@ impl<'a> Canvas<'a> {
         let d = self.px[i];
         let a = (a * c[3] as f32 / 255.0).min(1.0);
         let mix = |s: u8, dv: u32| (s as f32 * a + dv as f32 * (1.0 - a) + 0.5) as u32;
-        self.px[i] = (mix(c[0], (d >> 16) & 255) << 16) | (mix(c[1], (d >> 8) & 255) << 8) | mix(c[2], d & 255);
+        self.px[i] = (mix(c[0], (d >> 16) & 255) << 16) | (mix(c[1], (d >> 8) & 255) << 8) | mix(c[2], d & 255) | (d & 0xFF00_0000);
     }
 
     /// Paper: the base color, with its grain showing by `grain` (about 0.03 to 0.08).
@@ -513,7 +513,7 @@ impl<'a> Canvas<'a> {
                 let i = row + xx as usize;
                 let d = self.px[i];
                 let mix = |s: u32, dv: u32| (s * a + dv * (255 - a) + 127) / 255;
-                self.px[i] = (mix(cr, (d >> 16) & 255) << 16) | (mix(cg, (d >> 8) & 255) << 8) | mix(cb, d & 255);
+                self.px[i] = (mix(cr, (d >> 16) & 255) << 16) | (mix(cg, (d >> 8) & 255) << 8) | mix(cb, d & 255) | (d & 0xFF00_0000);
             }
         }
     }
@@ -540,7 +540,7 @@ impl<'a> Canvas<'a> {
                 let i = row + xx as usize;
                 let d = self.px[i];
                 let mix = |s: u32, dv: u32| (s * a + dv * (255 - a) + 127) / 255;
-                self.px[i] = (mix(cr, (d >> 16) & 255) << 16) | (mix(cg, (d >> 8) & 255) << 8) | mix(cb, d & 255);
+                self.px[i] = (mix(cr, (d >> 16) & 255) << 16) | (mix(cg, (d >> 8) & 255) << 8) | mix(cb, d & 255) | (d & 0xFF00_0000);
             }
         }
     }
@@ -625,7 +625,7 @@ impl<'a> Canvas<'a> {
                 let i = row + x as usize;
                 let d = self.px[i];
                 let mix = |s: u32, dv: u32| (s * a + dv * (255 - a) + 127) / 255;
-                self.px[i] = (mix(cr, (d >> 16) & 255) << 16) | (mix(cg, (d >> 8) & 255) << 8) | mix(cb, d & 255);
+                self.px[i] = (mix(cr, (d >> 16) & 255) << 16) | (mix(cg, (d >> 8) & 255) << 8) | mix(cb, d & 255) | (d & 0xFF00_0000);
             }
         }
     }

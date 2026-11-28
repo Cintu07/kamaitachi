@@ -79,6 +79,18 @@ impl Painter {
         }
     }
 
+    /// Rounds a box's corners by putting `fill` back outside them.
+    pub fn round_corners(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, fill: [u8; 4]) {
+        match self {
+            Painter::Gpu(g) => {
+                // the gpu target is opaque: a ring as thick as the corner covers what is outside
+                let clip = [x - 1.0, y - 1.0, x + w + 1.0, y + h + 1.0];
+                g.ring(x - radius, y - radius, w + 2.0 * radius, h + 2.0 * radius, radius, fill, 2.0 * radius, clip)
+            }
+            Painter::Soft(s) => s.round_corners(x, y, w, h, radius, fill),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn ring(&mut self, x: f32, y: f32, w: f32, h: f32, width: f32, color: [u8; 4], radius: f32, clip: Clip) {
         match self {

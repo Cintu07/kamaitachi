@@ -71,6 +71,13 @@ const NIGHT: Skin = Skin {
 
 thread_local! {
     static CURRENT: Cell<Skin> = const { Cell::new(MARBLE) };
+    /// whether this window can be glass: only the cpu painter keeps per-pixel alpha
+    static GLASS: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Says whether the window can show glass at all.
+pub fn glass_possible(on: bool) {
+    GLASS.with(|g| g.set(on));
 }
 
 /// The colours the window is drawn with right now.
@@ -89,6 +96,12 @@ fn windows_light() -> bool {
     v != 0
 }
 
+/// (frame, card, lines) of a look, for the small pictures on the settings page.
+pub fn preview(light: bool) -> (Rgba, Rgba, Rgba) {
+    let s = if light { MARBLE } else { NIGHT };
+    (s.frame, if light { [0xff, 0xff, 0xff, 255] } else { [0x24, 0x2a, 0x33, 255] }, s.faint)
+}
+
 /// Works out the colours from the settings. Call at start and after a setting changes.
 pub fn refresh() {
     let p = prefs::get();
@@ -103,6 +116,10 @@ pub fn refresh() {
     s.ink = s.accent;
     if p.contrast {
         s.muted = s.text;
+    }
+    // on glass the marble is a tint over whatever is behind the window
+    if p.glass && GLASS.with(|g| g.get()) {
+        s.frame[3] = (p.tint * 255 / 100) as u8;
     }
     CURRENT.with(|c| c.set(s));
 }

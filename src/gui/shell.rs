@@ -96,10 +96,8 @@ impl App {
         let (x0, y0, x1, y1) = (b.x * k, b.y * k, (b.x + b.w) * k, (b.y + b.h) * k);
         let rk = r * k;
         let corners = [[x0, y0, x0 + rk, y0 + rk], [x1 - rk, y0, x1, y0 + rk], [x0, y1 - rk, x0 + rk, y1], [x1 - rk, y1 - rk, x1, y1]];
+        self.gpu.round_corners(x0, y0, x1 - x0, y1 - y0, rk, s.frame);
         for clip in corners {
-            // a ring as thick as the corner, its inner edge rounded to the corner, in the
-            // marble's colour: it covers exactly what lies outside the rounded card
-            self.gpu.ring(x0 - rk, y0 - rk, x1 - x0 + 2.0 * rk, y1 - y0 + 2.0 * rk, rk, s.frame, 2.0 * rk, clip);
             self.gpu.ring(x0, y0, x1 - x0, y1 - y0, 1.0, s.hairline, rk, clip);
         }
         let line = s.hairline;
@@ -148,7 +146,7 @@ impl App {
         let (p, s, col, k) = (prefs::get(), sk(), self.column_box(), self.scale);
         let (x0, w, h) = (col.x, col.w, col.h);
         let hover = self.hover;
-        if p.veins {
+        if p.veins && s.frame[3] == 255 {
             self.draw_veins(col);
         }
         if p.side == Side::Right || !p.card {
@@ -356,15 +354,16 @@ impl App {
         }
         // the name, cut in capitals the way names are cut in stone
         let name = "KAMAITACHI";
+        let face = text::CARVED;
         let size = (b.h * 0.05).clamp(26.0, 40.0);
-        let spacing = size * 0.34;
-        let widths: Vec<f32> = name.chars().map(|c| self.ui_text(&c.to_string(), size, 400, text::SERIF, s.text).1).collect();
+        let spacing = size * 0.22;
+        let widths: Vec<f32> = name.chars().map(|c| self.ui_text(&c.to_string(), size, 400, face, s.text).1).collect();
         let total: f32 = widths.iter().sum::<f32>() + spacing * (widths.len() - 1) as f32;
         let mid = b.x + b.w / 2.0;
         let y = b.y + b.h * 0.38;
         let mut x = mid - total / 2.0;
         for (c, w) in name.chars().zip(&widths) {
-            self.label(&c.to_string(), x, y, size, 400, s.text, w + 2.0, text::SERIF);
+            self.label(&c.to_string(), x, y, size, 400, s.text, w + 2.0, face);
             x += w + spacing;
         }
         self.meander(mid - 66.0, y + size * 1.6, 132.0, s.gold);

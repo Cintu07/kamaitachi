@@ -673,9 +673,16 @@ impl App {
         if c.disabled {
             return;
         }
-        if let Some(page) = self.tab_mut().page.as_mut() {
+        let auto = {
+            let Some(page) = self.tab_mut().page.as_mut() else { return };
             form::choose(&mut page.doc.dom, m.node, c.node);
-            self.restyle();
+            let dom = &page.doc.dom;
+            let ours = page.doc.url.host == "kamaitachi.local";
+            form::owner(dom, m.node).filter(|&f| ours && dom.attr(f, crate::web::dom::atom("data-auto")).is_some())
+        };
+        match auto {
+            Some(f) => self.send(f, None),
+            None => self.restyle(),
         }
     }
 

@@ -47,7 +47,8 @@ impl Mask {
     }
 }
 
-/// The alpha byte every pixel carries. GDI ignores it; an Android Bitmap needs it.
+/// The alpha byte of a pixel nothing shows through. Pixels are premultiplied, so where
+/// the window is glass, what is drawn over it keeps the glass showing at its edges.
 const OPAQUE: u32 = 0xFF00_0000;
 
 /// Premultiplied 0..255 channels.
@@ -73,13 +74,15 @@ fn over(d: u32, s: Px) -> u32 {
         return OPAQUE | (s.r << 16) | (s.g << 8) | s.b;
     }
     let ia = 255 - s.a;
+    let da = d >> 24;
     let dr = (d >> 16) & 255;
     let dg = (d >> 8) & 255;
     let db = d & 255;
+    let a = s.a + (da * ia + 127) / 255;
     let r = s.r + (dr * ia + 127) / 255;
     let g = s.g + (dg * ia + 127) / 255;
     let b = s.b + (db * ia + 127) / 255;
-    OPAQUE | (r.min(255) << 16) | (g.min(255) << 8) | b.min(255)
+    (a.min(255) << 24) | (r.min(255) << 16) | (g.min(255) << 8) | b.min(255)
 }
 
 #[inline]
@@ -153,7 +156,8 @@ impl<B: AsMut<[u32]>> Frame<B> {
     }
 
     pub fn fill(&mut self, c: [u8; 4]) {
-        self.buf.as_mut().fill(OPAQUE | ((c[0] as u32) << 16) | ((c[1] as u32) << 8) | c[2] as u32);
+        let p = premul(c);
+        self.buf.as_mut().fill((p.a << 24) | (p.r << 16) | (p.g << 8) | p.b);
     }
 
     /// Integer pixel bounds of a box inside a clip and the frame.
@@ -206,6 +210,35 @@ impl<B: AsMut<[u32]>> Frame<B> {
                 }
                 let d = &mut buf[base + xx];
                 *d = over(*d, if cov >= 1.0 { s } else { scale(s, (cov * 255.0) as u32) });
+            }
+        }
+    }
+
+    /// Puts `fill` back outside the rounded corners of a box: whatever was drawn there
+    /// is replaced, not covered, so a see-through fill stays see-through. Only the four
+    /// corner squares are visited.
+    pub fn round_corners(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, fill: [u8; 4]) {
+        let r = radius.min(w / 2.0).min(h / 2.0);
+        if r < 0.5 {
+            return;
+        }
+        let f = premul(fill);
+        let stride = self.w as usize;
+        let (cx, cy, hw, hh) = (x + w / 2.0, y + h / 2.0, w / 2.0, h / 2.0);
+        for (sx, sy) in [(x, y), (x + w - r, y), (x, y + h - r), (x + w - r, y + h - r)] {
+            let Some((x0, y0, x1, y1)) = self.bounds(sx, sy, r.ceil(), r.ceil(), [sx, sy, sx + r.ceil(), sy + r.ceil()]) else { continue };
+            let buf = self.buf.as_mut();
+            for yy in y0..y1 {
+                for xx in x0..x1 {
+                    let cov = (rr_cov(xx as f32 + 0.5, yy as f32 + 0.5, cx, cy, hw, hh, r) * 255.0) as u32;
+                    if cov >= 255 {
+                        continue;
+                    }
+                    let p = &mut buf[yy * stride + xx];
+                    let d = *p;
+                    let mix = |dc: u32, fc: u32| (dc * cov + fc * (255 - cov) + 127) / 255;
+                    *p = (mix(d >> 24, f.a) << 24) | (mix((d >> 16) & 255, f.r) << 16) | (mix((d >> 8) & 255, f.g) << 8) | mix(d & 255, f.b);
+                }
             }
         }
     }

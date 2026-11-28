@@ -36,6 +36,10 @@ pub struct Prefs {
     /// faint veins in the marble of the column
     pub veins: bool,
     pub contrast: bool,
+    /// the column and the frame are glass: what is behind the window shows through, blurred
+    pub glass: bool,
+    /// how much of the marble's colour lies on the glass, in percent
+    pub tint: u32,
     /// each tab fills in as you read down its page
     pub read_fill: bool,
     pub dim_sleeping: bool,
@@ -83,6 +87,8 @@ impl Default for Prefs {
             meander: true,
             veins: true,
             contrast: false,
+            glass: true,
+            tint: 60,
             read_fill: true,
             dim_sleeping: true,
             tab_numbers: true,
@@ -178,6 +184,7 @@ impl Prefs {
             "sleep_after" => self.sleep_after.to_string(),
             "close_after" => self.close_after.to_string(),
             "zoom" => self.zoom.to_string(),
+            "tint" => self.tint.to_string(),
             k => on(self.flag(k).unwrap_or(false)),
         }
     }
@@ -191,6 +198,7 @@ impl Prefs {
             "meander" => self.meander,
             "veins" => self.veins,
             "contrast" => self.contrast,
+            "glass" => self.glass,
             "read_fill" => self.read_fill,
             "dim_sleeping" => self.dim_sleeping,
             "tab_numbers" => self.tab_numbers,
@@ -244,6 +252,10 @@ impl Prefs {
                 Some(n) => self.close_after = n,
                 None => return false,
             },
+            "tint" => match num.filter(|n| (20..=95).contains(n)) {
+                Some(n) => self.tint = n,
+                None => return false,
+            },
             "zoom" => match num.filter(|n| (50..=300).contains(n)) {
                 Some(n) => self.zoom = n,
                 None => return false,
@@ -258,6 +270,7 @@ impl Prefs {
                     "meander" => &mut self.meander,
                     "veins" => &mut self.veins,
                     "contrast" => &mut self.contrast,
+                    "glass" => &mut self.glass,
                     "read_fill" => &mut self.read_fill,
                     "dim_sleeping" => &mut self.dim_sleeping,
                     "tab_numbers" => &mut self.tab_numbers,

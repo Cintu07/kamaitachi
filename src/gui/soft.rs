@@ -62,6 +62,10 @@ impl Soft {
         self.frame.rect(x, y, w, h, color, radius, clip);
     }
 
+    pub fn round_corners(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, fill: [u8; 4]) {
+        self.frame.round_corners(x, y, w, h, radius, fill);
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn ring(&mut self, x: f32, y: f32, w: f32, h: f32, width: f32, color: [u8; 4], radius: f32, clip: Clip) {
         self.frame.ring(x, y, w, h, width, color, radius, clip);
@@ -168,6 +172,8 @@ impl Soft {
 
     pub fn capture(&mut self) -> Result<(u32, u32, Vec<u8>)> {
         let f = &self.frame;
-        Ok((f.w, f.h, f.buf.iter().flat_map(|p| (p | 0xFF00_0000).to_le_bytes()).collect()))
+        // HAYATE_SHOT_ALPHA keeps the glass see-through in the picture, to check it against a backdrop
+        let keep = if std::env::var_os("HAYATE_SHOT_ALPHA").is_some() { 0 } else { 0xFF00_0000 };
+        Ok((f.w, f.h, f.buf.iter().flat_map(|p| (p | keep).to_le_bytes()).collect()))
     }
 }
