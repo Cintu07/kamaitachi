@@ -89,13 +89,12 @@ pub(super) fn edit_key(e: &mut Edit, vk: VIRTUAL_KEY, m: Mods) -> bool {
 impl App {
     /// A point in the window, as one on the page.
     fn on_page(&self, x: f32, y: f32) -> (f32, f32) {
-        let k = self.k();
-        (x / k, (y - TOP * self.scale) / k + self.tab().scroll)
+        self.to_page(x, y)
     }
 
     /// The control under the mouse that can be used, with its box.
     pub(super) fn control_at(&self, x: f32, y: f32) -> Option<(u32, Control, Rect)> {
-        if y <= TOP * self.scale {
+        if !self.in_page(x, y) {
             return None;
         }
         let (px, py) = self.on_page(x, y);
@@ -246,8 +245,7 @@ impl App {
 
     /// The address being typed, as one line of text.
     fn addr_para(&self) -> Para {
-        let (family, size) = if sk().drawn { (text::TYPEWRITER, 15.0) } else { (MONO, 13.0) };
-        let font = Font { family: Arc::from(family), size, weight: 400, italic: false };
+        let font = Font { family: Arc::from(UI_FONT), size: 17.0, weight: 400, italic: false };
         Field { node: 0, font, color: [0; 4], align: 1, line_h: 0.0, multiline: false, password: false }.para(&self.edit.text(), [0; 4])
     }
 
@@ -278,7 +276,7 @@ impl App {
     /// The character of the address under the mouse.
     pub(super) fn addr_char(&mut self, x: f32) -> usize {
         let Some(r) = self.hits.iter().find(|h| h.1 == Hit::Addr).map(|h| h.0) else { return 0 };
-        let (inset, spare) = if sk().drawn { (2.0, 8.0) } else { (14.0, 28.0) };
+        let (inset, spare) = (46.0, 62.0);
         let start = self.addr_start(r.w - spare);
         let p = self.addr_para();
         let x0 = self.dw.caret(&p, 1.0e5, start).x;
@@ -583,12 +581,13 @@ impl App {
         let widest = choices.iter().map(|c| c.label.clone()).collect::<Vec<_>>().iter().map(|l| self.ui_text(l, 13.0, 400, UI_FONT, [0; 4]).1).fold(0.0, f32::max);
         // the list is drawn at the size of the interface, under the box or above it
         let z = self.zoom;
-        let (x, y) = (r.x * z, TOP + (r.y - self.tab().scroll) * z);
+        let b = self.page_box();
+        let (x, y) = (b.x + r.x * z, b.y + (r.y - self.tab().scroll) * z);
         let (w, h) = (self.w as f32 / self.scale, self.h as f32 / self.scale);
         let mh = choices.len().min(ROWS) as f32 * ROW + 8.0;
         let mw = (widest + 34.0).max(r.w * z + 8.0).min(w - 16.0);
         let below = y + r.h * z + 5.0;
-        let my = if below + mh < h { below } else { (y - 5.0 - mh).max(TOP) };
+        let my = if below + mh < h { below } else { (y - 5.0 - mh).max(b.y) };
         let top = at.saturating_sub(ROWS / 2).min(choices.len().saturating_sub(ROWS));
         self.menu = Some(Menu { node, choices, at, top, r: Rect::new((x - 4.0).clamp(4.0, (w - mw - 4.0).max(4.0)), my, mw, mh) });
     }

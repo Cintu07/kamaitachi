@@ -45,6 +45,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_Networking_WinSock",
     "Win32_System_SystemInformation",
     "Win32_System_WindowsProgramming",
+    "Win32_System_Registry",
 ] }
 # the window browser: direct3d 11 for pixels, directwrite for shaping, wic for image decoding
 windows = { version = "0.62", features = [

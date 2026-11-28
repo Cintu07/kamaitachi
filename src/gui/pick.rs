@@ -50,8 +50,7 @@ impl App {
         if self.picking.is_none() {
             return false;
         }
-        let k = self.k();
-        let (px, py) = (x / k, (y - TOP * self.scale) / k + self.tab().scroll);
+        let (px, py) = self.to_page(x, y);
         if let Some(p) = self.picking.as_mut() {
             let under = p.boxes.iter().position(|(_, r)| r.contains(px, py));
             // still over the same box: keep the bigger one the arrows may have chosen
@@ -156,16 +155,19 @@ impl App {
         let Some(p) = self.picking.as_ref() else { return };
         let Some(&i) = p.at.last() else { return };
         let (node, r) = p.boxes[i];
-        let (k, top, s) = (self.k(), TOP * self.scale, sk());
+        let (k, s) = (self.k(), sk());
+        let (ox, top) = self.page_origin();
+        let pb = self.page_box();
         let y = (r.y - self.tab().scroll) * k + top;
-        let view = [0.0, top, self.w as f32, self.h as f32];
+        let x = ox + r.x * k;
+        let view = [ox, top, (pb.x + pb.w) * self.scale, (pb.y + pb.h) * self.scale];
         let a = s.accent;
-        self.gpu.rect(r.x * k, y, r.w * k, r.h * k, [a[0], a[1], a[2], 46], 2.0 * k, view);
-        self.gpu.ring(r.x * k, y, r.w * k, r.h * k, 2.0 * k, s.ink, 2.0 * k, view);
+        self.gpu.rect(x, y, r.w * k, r.h * k, [a[0], a[1], a[2], 46], 2.0 * k, view);
+        self.gpu.ring(x, y, r.w * k, r.h * k, 2.0 * k, s.ink, 2.0 * k, view);
         let name = self.tab().page.as_ref().map_or(String::new(), |pg| crate::web::dom::name(pg.doc.dom.tag(node)).to_string());
         let tag = format!("{name}  {:.0} × {:.0}", r.w, r.h);
-        let lx = (r.x * k / self.scale).max(4.0);
-        let ly = ((y / self.scale) - 22.0).max(TOP + 2.0);
+        let lx = (x / self.scale).max(pb.x + 4.0);
+        let ly = ((y / self.scale) - 22.0).max(pb.y + 2.0);
         let w = self.ui_text(&tag, 11.5, 400, MONO, s.text).1 + 14.0;
         self.rect(Rect::new(lx, ly, w, 19.0), s.ink, 3.0);
         self.label(&tag, lx + 7.0, ly + 2.5, 11.5, 400, s.field, w, MONO);

@@ -30,15 +30,15 @@ impl App {
                 None => eprintln!("drive: no control called {rest}"),
             },
             "click" => {
-                let k = self.k();
+                let (k, (ox, oy)) = (self.k(), self.page_origin());
                 if let Some((x, y)) = rest.split_once(' ').and_then(|(x, y)| Some((x.parse::<f32>().ok()?, y.parse::<f32>().ok()?))) {
-                    self.click(x * k, TOP * self.scale + y * k, Mods::default());
+                    self.click(ox + x * k, oy + y * k, Mods::default());
                 }
             }
             "move" => {
-                let k = self.k();
+                let (k, (ox, oy)) = (self.k(), self.page_origin());
                 if let Some((x, y)) = rest.split_once(' ').and_then(|(x, y)| Some((x.parse::<f32>().ok()?, y.parse::<f32>().ok()?))) {
-                    self.mouse_move(x * k, TOP * self.scale + y * k);
+                    self.mouse_move(ox + x * k, oy + y * k);
                 }
             }
             "type" => rest.chars().for_each(|c| self.type_char(c)),
@@ -79,8 +79,8 @@ impl App {
         let to = if r.y + r.h > self.view_h() { (r.y - 200.0).clamp(0.0, max) } else { 0.0 };
         let t = self.tab_mut();
         (t.scroll, t.target) = (to, to);
-        let k = self.k();
-        Some(((r.x + r.w / 2.0) * k, TOP * self.scale + (r.y + r.h / 2.0 - to) * k))
+        let (k, (ox, oy)) = (self.k(), self.page_origin());
+        Some((ox + (r.x + r.w / 2.0) * k, oy + (r.y + r.h / 2.0 - to) * k))
     }
 }
 
