@@ -73,11 +73,18 @@ A page that is on a malware or phishing list does not load at all. You get a war
 | `Ctrl+L` | address bar, type an address or words to search |
 | `Ctrl+T`, `Ctrl+W` | new tab, close tab |
 | `Ctrl+Tab`, `Ctrl+1` to `9` | next tab, a tab by number |
+| `Ctrl+K` | find a tab by a few letters of its name |
+| `Ctrl+Shift+T` | open the last closed tab again |
 | `Alt+Left`, `Alt+Right` | back, forward |
 | `Ctrl+Shift+E` | this site in the other engine |
+| `Ctrl+Shift+H` | hide a box on this site for good: point, widen with the arrows, click |
+| `Ctrl+Shift+R` | reading view |
+| `Ctrl+M` | mute a page in Chromium |
 | `Ctrl+Shift+K` | the next skin |
 | `Ctrl` `+` / `-` / `0` | zoom |
 | `F5` | reload |
+
+Tabs from last time come back when kamaitachi starts, and each one loads only when you open it.
 
 Drag an image onto the window and it becomes the new tab's wallpaper.
 
