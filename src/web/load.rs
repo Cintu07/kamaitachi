@@ -22,6 +22,40 @@ pub struct Fetched {
     /// 1 html, 2 plain text, 3 other
     pub kind: u8,
     pub body: Vec<u8>,
+    /// the server asked for this to be saved, under this name if it gave one
+    pub attachment: Option<String>,
+}
+
+/// What opening an address gave: a page to show, or a file to keep.
+pub enum Got {
+    Page(Doc),
+    File { name: String, body: Vec<u8> },
+}
+
+impl Fetched {
+    /// A file rather than a page: the server said so, or it is not text at all.
+    fn is_file(&self) -> bool {
+        if self.attachment.is_some() {
+            return true;
+        }
+        if self.kind != 3 {
+            return false;
+        }
+        let head = &self.body[..self.body.len().min(1024)];
+        // text has almost no control bytes; pdfs, zips, images and programs have many
+        let odd = head.iter().filter(|&&b| b < 9 || (b > 13 && b < 32)).count();
+        odd * 20 > head.len().max(1)
+    }
+
+    /// The name to save it under: the one the server gave, or the end of the address.
+    fn file_name(&self) -> String {
+        let given = self.attachment.clone().unwrap_or_default();
+        let last = self.url.path.split('?').next().unwrap_or("").rsplit('/').next().unwrap_or("");
+        let raw = if given.is_empty() { crate::url::percent_decode(last) } else { given };
+        let clean: String = raw.chars().filter(|c| !matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|') && !c.is_control()).collect();
+        let clean = clean.trim().trim_matches('.').to_string();
+        if clean.is_empty() { "download".into() } else { clean }
+    }
 }
 
 static GPC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -103,7 +137,8 @@ fn exchange(url: &Url, accept: &str, from: &str, page: bool, body: Option<&(Stri
         if resp.status >= 400 && got.is_empty() {
             return Err(format!("{} answered {}", u.host, resp.status));
         }
-        return Ok(Fetched { url: u, kind: resp.ctype, body: got });
+        let attachment = resp.attachment.as_ref().map(|a| String::from_utf8_lossy(a).into_owned());
+        return Ok(Fetched { url: u, kind: resp.ctype, body: got, attachment });
     }
     Err("too many redirects".into())
 }
@@ -192,7 +227,19 @@ pub struct Doc {
 
 /// The page and every stylesheet it links, ready to cascade.
 pub fn load(req: &Request) -> Result<Doc, String> {
+    match open(req)? {
+        Got::Page(d) => Ok(d),
+        Got::File { name, .. } => Err(format!("{name} is a file, not a page")),
+    }
+}
+
+/// Opens an address: the page, or the file it turned out to be.
+pub fn open(req: &Request) -> Result<Got, String> {
     let mut f = fetch_page(req)?;
+    if f.is_file() {
+        let name = f.file_name();
+        return Ok(Got::File { name, body: f.body });
+    }
     let mut text = decode_text(&f.body);
     // a page that only sends you on, the way static sites move an address
     for _ in 0..5 {
@@ -209,7 +256,7 @@ pub fn load(req: &Request) -> Result<Doc, String> {
     } else {
         text
     };
-    Ok(from_html(&html, f.url, f.kind))
+    Ok(Got::Page(from_html(&html, f.url, f.kind)))
 }
 
 /// Where a `<meta http-equiv="refresh">` sends the reader at once, if the page has
@@ -409,6 +456,18 @@ mod tests {
         assert_eq!(refresh("<meta http-equiv=refresh content=\"60; url=/same\">"), None);
         assert_eq!(refresh("<meta http-equiv=refresh content=5>"), None);
         assert_eq!(refresh("<meta name=description content=\"refresh; url=x\">"), None);
+    }
+
+    #[test]
+    fn files_are_told_from_pages() {
+        let f = |kind, body: &[u8], attachment: Option<&str>, path: &str| Fetched { url: Url { host: "x.com".into(), path: path.into() }, kind, body: body.to_vec(), attachment: attachment.map(str::to_string) };
+        assert!(f(3, b"%PDF-1.7\n\x00\x01\x02\x03\x04\x05\x06\x07\x08\x0e\x0f\x10", None, "/a.pdf").is_file());
+        assert!(!f(3, b"<html>hello</html>", None, "/").is_file());
+        assert!(!f(1, b"\x00\x01\x02\x03", None, "/").is_file());
+        assert!(f(1, b"<html>", Some(""), "/get").is_file());
+        assert_eq!(f(3, b"", None, "/files/My%20Report.pdf?v=2").file_name(), "My Report.pdf");
+        assert_eq!(f(3, b"", Some("a/b:c.zip"), "/x").file_name(), "abc.zip");
+        assert_eq!(f(3, b"", None, "/").file_name(), "download");
     }
 
     #[test]

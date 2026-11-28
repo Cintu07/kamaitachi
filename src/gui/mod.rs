@@ -72,6 +72,8 @@ enum Msg {
     Preview { tab: u64, seq: u64, dl: DisplayList, url: String },
     Done { tab: u64, seq: u64, page: Box<Page>, dl: DisplayList, pixels: Vec<(u32, u32, u32, Vec<u8>)>, blocked: u32 },
     Fail { tab: u64, seq: u64, err: String, url: String },
+    /// the address was a file, now kept in Downloads
+    Saved { tab: u64, seq: u64, name: String },
     /// the page is a javascript app: open it in the full engine
     NeedsJs { tab: u64, seq: u64, url: String, learn: bool },
     /// the page is on a malware or phishing list
@@ -679,7 +681,11 @@ fn test_profile() {
     crate::web::block::set_dir(wall_dir().join("filters"));
     let test = std::env::temp_dir().join("kamaitachi-test");
     let _ = std::fs::create_dir_all(test.join("hayate"));
-    unsafe { std::env::set_var("APPDATA", &test) };
+    // downloads go to the test profile's own folder, not yours
+    unsafe {
+        std::env::set_var("APPDATA", &test);
+        std::env::set_var("USERPROFILE", &test);
+    }
 }
 
 /// Where sign-ins are kept between runs, readable only by this Windows user.
@@ -716,7 +722,15 @@ fn load_page(req: load::Request, vw: f32, vh: f32, dpr: f32, tab: u64, seq: u64,
         let doc = if url == START {
             load::from_html(START_HTML, Url { host: "hayate".into(), path: "/start".into() }, 1)
         } else {
-            load::load(&req)?
+            match load::open(&req)? {
+                load::Got::Page(d) => d,
+                load::Got::File { name, body } => {
+                    let path = places::keep_download(&name, &body, &req.url.full())?;
+                    let name = path.file_name().map_or(name, |n| n.to_string_lossy().into_owned());
+                    shared.post(Msg::Saved { tab, seq, name });
+                    return Ok(());
+                }
+            }
         };
         // a link that looked fine can redirect to one that is not
         if url != START && crate::web::block::is_danger(&doc.url.full()) {
@@ -1389,7 +1403,15 @@ impl App {
                 let section = self.take_setting(q);
                 return self.show_settings(i, "", &section, false);
             }
-            for name in ["history", "bookmarks"] {
+            if let Some(f) = rest.strip_prefix("openfile?f=") {
+                places::open_file(&crate::url::percent_decode(f), false);
+                return self.show_place(i, "downloads", "", false);
+            }
+            if let Some(f) = rest.strip_prefix("showfile?f=") {
+                places::open_file(&crate::url::percent_decode(f), true);
+                return self.show_place(i, "downloads", "", false);
+            }
+            for name in ["history", "bookmarks", "downloads"] {
                 if let Some(q) = rest.strip_prefix(name) {
                     let find = q.strip_prefix("?q=").map(crate::url::percent_decode).unwrap_or_default();
                     return self.show_place(i, name, &find, push);
@@ -1629,6 +1651,20 @@ impl App {
                     }
                     self.load_full(i, url, false);
                 }
+                Msg::Saved { tab, seq, name } => {
+                    let Some(i) = self.tabs.iter().position(|t| t.id == tab && t.seq == seq) else { continue };
+                    self.say(&format!("{name} is in Downloads"));
+                    let t = &mut self.tabs[i];
+                    t.loading = false;
+                    // the page you were on stays; a tab opened only for the file shows the list
+                    if t.dl.is_some() && t.page.is_some()
+                        && let Some((u, _)) = t.back.pop()
+                    {
+                        t.url = u;
+                    } else {
+                        self.show_place(i, "downloads", "", false);
+                    }
+                }
                 Msg::Fail { tab, seq, err, url } => {
                     let Some(i) = self.tabs.iter().position(|t| t.id == tab && t.seq == seq) else { continue };
                     let doc = load::from_html(&error_html(&url, &err), Url { host: "hayate".into(), path: "/error".into() }, 1);
@@ -1846,6 +1882,10 @@ impl App {
                 VK_H if !shift => {
                     let c = self.cur;
                     self.show_place(c, "history", "", true);
+                }
+                VK_J if !shift => {
+                    let c = self.cur;
+                    self.show_place(c, "downloads", "", true);
                 }
                 VK_O if shift => {
                     let c = self.cur;

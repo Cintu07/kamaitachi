@@ -349,7 +349,7 @@ impl App {
         }
         self.icon('\u{E713}', gear.x + 14.0, gear.y + 14.0, 13.0, s.muted);
         self.hits.push((gear, Hit::Settings));
-        for (k, (glyph, hit)) in [('\u{E728}', Hit::Page("bookmarks")), ('\u{E81C}', Hit::Page("history"))].into_iter().enumerate() {
+        for (k, (glyph, hit)) in [('\u{E728}', Hit::Page("bookmarks")), ('\u{E81C}', Hit::Page("history")), ('\u{E896}', Hit::Page("downloads"))].into_iter().enumerate() {
             let r = Rect::new(gear.x + 30.0 * (k + 1) as f32, fy, 28.0, 28.0);
             if hover == hit {
                 self.rect(r, s.hover, 7.0);
@@ -361,7 +361,7 @@ impl App {
         if self.tab().blocked > 0 {
             foot.push_str(&format!("  ·  {} blocked", self.tab().blocked));
         }
-        self.label(&foot, x0 + 104.0, fy + 6.0, 12.0, 400, s.muted, w - 114.0, UI_FONT);
+        self.label(&foot, x0 + 134.0, fy + 6.0, 12.0, 400, s.muted, w - 144.0, UI_FONT);
         if p.meander {
             self.meander(x0 + 12.0, h - 9.0, w - 24.0, s.gold);
         }

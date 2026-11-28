@@ -194,7 +194,7 @@ form {{ margin: 0 0 18px; }}
 input {{ width: 100%; box-sizing: border-box; font-size: 14px; padding: 9px 12px; border: 1px solid {line}; border-radius: 9px; background: {field}; color: {text}; }}
 h2 {{ font-family: "Cinzel", Georgia, serif; font-size: 12.5px; font-weight: 700; letter-spacing: 1.6px; color: {muted}; margin: 26px 0 4px; }}
 .row {{ display: flex; align-items: center; padding: 9px 0; border-bottom: 1px solid {line}; }}
-.row a.go {{ flex: 1 1 auto; min-width: 0; color: {text}; text-decoration: none; }}
+.row .go {{ flex: 1 1 auto; min-width: 0; color: {text}; text-decoration: none; }}
 .row b {{ display: block; font-weight: 500; }}
 .row span {{ display: block; font-size: 12.5px; color: {muted}; margin-top: 2px; }}
 .row i {{ flex: 0 0 auto; font-style: normal; font-size: 12px; color: {muted}; padding-left: 16px; }}
@@ -276,6 +276,92 @@ pub(super) fn bookmarks_html(find: &str) -> String {
     page("Bookmarks", "https://kamaitachi.local/bookmarks", find, "Search bookmarks", &rows, "")
 }
 
+/// Your Downloads folder.
+fn downloads_dir() -> std::path::PathBuf {
+    let home = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".into());
+    std::path::Path::new(&home).join("Downloads")
+}
+
+/// Writes a file into Downloads under a name not taken yet, "report (2).pdf" if
+/// "report.pdf" is, and notes it in downloads.txt. Returns where it went.
+pub(super) fn keep_download(name: &str, body: &[u8], from: &str) -> Result<std::path::PathBuf, String> {
+    let dir = downloads_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((a, b)) if !a.is_empty() => (a.to_string(), format!(".{b}")),
+        _ => (name.to_string(), String::new()),
+    };
+    let mut path = dir.join(name);
+    let mut n = 1;
+    while path.exists() {
+        n += 1;
+        path = dir.join(format!("{stem} ({n}){ext}"));
+    }
+    std::fs::write(&path, body).map_err(|e| format!("could not save {name}: {e}"))?;
+    let line = format!("{}\t{}\t{}\t{}\n", crate::sys::now_unix(), body.len(), path.display(), clean(from));
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(file("downloads.txt")) {
+        let _ = f.write_all(line.as_bytes());
+    }
+    Ok(path)
+}
+
+/// Opens a downloaded file with its program, or shows it in its folder. Only files in
+/// the downloads list, so a page cannot ask for anything else to be run.
+pub(super) fn open_file(path: &str, folder: bool) {
+    let text = std::fs::read_to_string(file("downloads.txt")).unwrap_or_default();
+    if !text.lines().any(|l| l.split('\t').nth(2) == Some(path)) {
+        return;
+    }
+    use windows::core::HSTRING;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    unsafe {
+        if folder {
+            let args = HSTRING::from(format!("/select,\"{path}\""));
+            ShellExecuteW(None, &HSTRING::from("open"), &HSTRING::from("explorer.exe"), &args, None, SW_SHOWNORMAL);
+        } else {
+            ShellExecuteW(None, &HSTRING::from("open"), &HSTRING::from(path), None, None, SW_SHOWNORMAL);
+        }
+    }
+}
+
+fn size_words(n: u64) -> String {
+    match n {
+        0..1024 => format!("{n} B"),
+        1024..1_048_576 => format!("{:.0} KB", n as f64 / 1024.0),
+        _ => format!("{:.1} MB", n as f64 / 1_048_576.0),
+    }
+}
+
+pub(super) fn downloads_html(find: &str) -> String {
+    let text = std::fs::read_to_string(file("downloads.txt")).unwrap_or_default();
+    let mut rows = String::new();
+    for l in text.lines().rev().take(300) {
+        let mut f = l.splitn(4, '\t');
+        let (Some(_), Some(size), Some(path), from) = (f.next(), f.next(), f.next(), f.next().unwrap_or("")) else { continue };
+        let name = std::path::Path::new(path).file_name().map_or(path.to_string(), |n| n.to_string_lossy().into_owned());
+        if !words_in(find, &name, from) {
+            continue;
+        }
+        let gone = !std::path::Path::new(path).exists();
+        let p = crate::url::encode(path);
+        let acts = if gone {
+            "<i>moved or deleted</i>".to_string()
+        } else {
+            format!("<a class=x href=\"https://kamaitachi.local/openfile?f={p}\">Open</a><a class=x href=\"https://kamaitachi.local/showfile?f={p}\">Show in folder</a>")
+        };
+        rows.push_str(&format!(
+            "<div class=row><div class=go><b>{}</b><span>{} · {}</span></div>{acts}</div>",
+            esc(&name),
+            size_words(size.parse().unwrap_or(0)),
+            esc(from.trim_start_matches("https://"))
+        ));
+    }
+    let rows = if rows.is_empty() { "<p class=none>Files you download show up here.</p>".to_string() } else { rows };
+    page("Downloads", "https://kamaitachi.local/downloads", find, "Search downloads", &rows, "")
+}
+
 impl App {
     /// Bookmarks the page in front, or takes the bookmark away.
     pub(super) fn bookmark(&mut self) {
@@ -297,7 +383,11 @@ impl App {
         }
         t.full_mode = false;
         t.url = if find.is_empty() { url } else { format!("{url}?q={}", crate::url::encode(find)) };
-        let (html, title) = if name == "history" { (history_html(find), "History") } else { (bookmarks_html(find), "Bookmarks") };
+        let (html, title) = match name {
+            "history" => (history_html(find), "History"),
+            "downloads" => (downloads_html(find), "Downloads"),
+            _ => (bookmarks_html(find), "Bookmarks"),
+        };
         self.show_html(i, &html, title);
     }
 }

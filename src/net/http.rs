@@ -84,6 +84,8 @@ pub struct Response {
     pub location: Vec<u8>,
     /// each Set-Cookie header
     pub cookies: Vec<Vec<u8>>,
+    /// Content-Disposition said attachment: the file name it gave, or empty
+    pub attachment: Option<Vec<u8>>,
     pub head_done: bool,
     no_body: bool,
 }
@@ -115,6 +117,7 @@ impl Response {
             encoded: false,
             location: Vec::new(),
             cookies: Vec::new(),
+            attachment: None,
             head_done: false,
             no_body: false,
         }
@@ -185,6 +188,14 @@ impl Response {
             };
         } else if is("content-encoding") {
             self.encoded = !val.eq_ignore_ascii_case(b"identity");
+        } else if is("content-disposition") && contains_ci(val, b"attachment") {
+            // filename="report.pdf", or filename*=UTF-8''report.pdf
+            let name = val.windows(9).position(|w| w.eq_ignore_ascii_case(b"filename=")).map(|p| {
+                let v = &val[p + 9..];
+                let v = v.strip_prefix(b"\"").unwrap_or(v);
+                v.iter().copied().take_while(|&b| b != b'"' && b != b';').collect::<Vec<u8>>()
+            });
+            self.attachment = Some(name.unwrap_or_default());
         } else if is("location") {
             self.location = val.to_vec();
         } else if is("set-cookie") && self.cookies.len() < 100 {
@@ -438,6 +449,15 @@ mod tests {
             assert_eq!(r.location, to.as_bytes());
             assert_eq!(r.cookies, [b"a=1; Path=/".to_vec(), b"b=2".to_vec()]);
         }
+    }
+
+    #[test]
+    fn attachments_say_their_name() {
+        let raw = b"HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename=\"r e.pdf\"; size=3\r\nContent-Length: 0\r\n\r\n";
+        let (r, _, _) = parse(&[raw]);
+        assert_eq!(r.attachment.as_deref(), Some(&b"r e.pdf"[..]));
+        let (r, _, _) = parse(&[b"HTTP/1.1 200 OK\r\nContent-Disposition: inline\r\nContent-Length: 0\r\n\r\n"]);
+        assert!(r.attachment.is_none());
     }
 
     #[test]

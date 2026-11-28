@@ -112,6 +112,7 @@ const KEYS: &[(&str, &str)] = &[
     ("Ctrl+D", "bookmark this page"),
     ("Ctrl+H", "history"),
     ("Ctrl+Shift+O", "bookmarks"),
+    ("Ctrl+J", "downloads"),
     ("Ctrl+,", "these settings"),
 ];
 
