@@ -127,6 +127,8 @@ pub struct DisplayList {
     pub fields: Vec<Field>,
     /// every box laid out, innermost first; only filled for the hiding picker
     pub boxes: Vec<(dom::NodeId, Rect)>,
+    /// every paragraph and where it was laid out (x, y, width); only filled for find
+    pub paras: Vec<(Para, Rect)>,
     pub height: f32,
     pub width: f32,
     /// the canvas: the root or body background

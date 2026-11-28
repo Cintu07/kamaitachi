@@ -6,6 +6,7 @@
 pub mod brush;
 mod drive;
 mod fields;
+mod find;
 mod pick;
 mod prefs;
 mod settings;
@@ -215,6 +216,7 @@ struct App {
     /// tabs closed, the last one last
     closed: Vec<tabs::Closed>,
     picking: Option<pick::Pick>,
+    find: Option<find::Find>,
     /// the mouse is over a box to type in, or something to press
     over: Option<bool>,
     /// the first half of a character that arrives as two messages, an emoji say
@@ -364,6 +366,7 @@ pub fn run(urls: Vec<String>) -> Result<(), String> {
             menu: None,
             closed: Vec::new(),
             picking: None,
+            find: None,
             over: None,
             half: 0,
             last_click: (Instant::now(), -100.0, -100.0),
@@ -1332,6 +1335,7 @@ impl App {
             self.focus = None;
             self.menu = None;
             self.picking = None;
+            self.find = None;
         }
         self.tabs[i].reading = false;
         self.tabs[i].asleep = false;
@@ -1620,6 +1624,10 @@ impl App {
         t.target = t.scroll;
         t.dl = Some(dl);
         t.vw = vw;
+        // the matches moved with the text
+        if self.find.is_some() {
+            self.open_find();
+        }
     }
 
     // ---- input ----
@@ -1638,7 +1646,7 @@ impl App {
 
     /// A character from the keyboard.
     fn type_char(&mut self, c: char) {
-        if self.menu_char(c) {
+        if self.menu_char(c) || (!self.addr_focused && self.find_char(c)) {
         } else if self.addr_focused {
             self.edit.insert(&c.to_string());
             self.addr_pick = 0;
@@ -1677,7 +1685,7 @@ impl App {
         };
         if self.addr_focused {
             self.edit.insert(s.trim());
-        } else {
+        } else if !self.find_paste(&s) {
             self.type_text(&s);
         }
     }
@@ -1704,6 +1712,10 @@ impl App {
     /// Copy, cut and paste in whatever is being edited.
     fn clipboard_key(&mut self, vk: VIRTUAL_KEY) -> bool {
         // a password can be pasted in but not copied out
+        if vk == VK_V && !self.addr_focused && self.find.is_some() {
+            self.paste();
+            return true;
+        }
         let hidden = !self.addr_focused && self.password();
         let Some(e) = self.editing() else { return false };
         let picked = e.selected();
@@ -1724,7 +1736,7 @@ impl App {
     /// Returns true when the key was used.
     fn key(&mut self, vk: VIRTUAL_KEY, m: Mods) -> bool {
         let Mods { ctrl, shift, alt } = m;
-        if self.pick_key(vk) || (self.addr_focused && self.address_key(vk)) {
+        if self.pick_key(vk) || (self.addr_focused && self.address_key(vk)) || (!self.addr_focused && self.find_key(vk, m)) {
             return true;
         }
         if alt {
@@ -1753,6 +1765,7 @@ impl App {
                 VK_H if shift => self.start_pick(),
                 VK_R if shift => self.toggle_reading(),
                 VK_K if !shift => self.focus_addr(),
+                VK_F if !shift => self.open_find(),
                 VK_M => self.toggle_mute(),
                 VK_S => {
                     self.column_hidden = !self.column_hidden;
@@ -2012,6 +2025,7 @@ impl App {
         self.draw_card(card);
         self.draw_page();
         self.draw_pick();
+        self.draw_find();
         let t1 = t0.elapsed();
         self.draw_card_edges();
         self.draw_loading();

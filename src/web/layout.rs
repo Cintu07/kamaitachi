@@ -90,6 +90,7 @@ struct Mark {
     links: usize,
     clips: usize,
     boxes: usize,
+    paras: usize,
 }
 
 #[derive(Clone, Copy, Default, Debug)]
@@ -173,8 +174,9 @@ pub fn layout(dom: &Dom, st: &Styles, text: &mut dyn TextEngine, img: &mut Image
     run(dom, st, text, img, base, vw, vh, false)
 }
 
-/// The same, with every box it placed in `boxes`, so a point can be traced back to an
-/// element. Only the hiding picker wants that, and only while it is open.
+/// The same, with every box it placed in `boxes` and every paragraph in `paras`, so a
+/// point can be traced back to an element and words found on the page. Only the hiding
+/// picker and find want that, and only while they are open.
 pub fn layout_boxes(dom: &Dom, st: &Styles, text: &mut dyn TextEngine, img: &mut Images, base: &Url, vw: f32, vh: f32) -> DisplayList {
     run(dom, st, text, img, base, vw, vh, true)
 }
@@ -265,7 +267,7 @@ impl<'a> Layout<'a> {
     }
 
     fn mark(&self) -> Mark {
-        Mark { items: self.out.items.len(), glyphs: self.out.glyphs.len(), links: self.out.links.len(), clips: self.out.clips.len(), boxes: self.out.boxes.len() }
+        Mark { items: self.out.items.len(), glyphs: self.out.glyphs.len(), links: self.out.links.len(), clips: self.out.clips.len(), boxes: self.out.boxes.len(), paras: self.out.paras.len() }
     }
 
     /// Children in box order: ::before, the element's children (display: contents
@@ -498,6 +500,7 @@ impl<'a> Layout<'a> {
         if !s.visible {
             self.out.items.truncate(content.items);
             self.out.links.truncate(content.links);
+            self.out.paras.truncate(content.paras);
         }
         if s.opacity < 1.0 {
             self.fade_range(start, s.opacity);
@@ -654,6 +657,10 @@ impl<'a> Layout<'a> {
             r.x += dx;
             r.y += dy;
         }
+        for (_, r) in &mut self.out.paras[from.paras..to.paras] {
+            r.x += dx;
+            r.y += dy;
+        }
     }
 
     fn clip_range(&mut self, from: Mark, clip: Rect) {
@@ -718,6 +725,7 @@ impl<'a> Layout<'a> {
             self.out.items.push(it);
         }
         self.out.boxes.extend(frag.boxes.iter().map(|(n, r)| (*n, Rect::new(r.x + dx, r.y + dy, r.w, r.h))));
+        self.out.paras.extend(frag.paras.into_iter().map(|(p, r)| (p, Rect::new(r.x + dx, r.y + dy, r.w, r.h))));
         for l in frag.links {
             self.out.links.push(Link { r: Rect::new(l.r.x + dx, l.r.y + dy, l.r.w, l.r.h), href: l.href + hbase });
         }
@@ -803,6 +811,9 @@ impl<'a> Layout<'a> {
     /// Breaks a paragraph into lines at (x, y) and places its objects; returns its height.
     fn place_para(&mut self, pb: Pb, x: f32, y: f32, w: f32) -> f32 {
         let po = self.text.layout(&pb.para, w.max(1.0), x, y, Some(&mut self.out));
+        if self.record && pb.visible {
+            self.out.paras.push((pb.para.clone(), Rect::new(x, y, w.max(1.0), po.height)));
+        }
         for (k, obj) in pb.objs.into_iter().enumerate() {
             let Some(&(ox, oy)) = po.objs.get(k) else { continue };
             let (ax, ay) = (x + ox, y + oy);
