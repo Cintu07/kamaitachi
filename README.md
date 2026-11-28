@@ -6,14 +6,15 @@ kamaitachi is a web browser for Windows that tries to use as little memory as it
 
 ![the new tab](docs/newtab.jpg)
 
-![a Wikipedia article in the light engine](docs/page.jpg)
+![Hacker News in the light engine, with the tabs down the left](docs/page.jpg)
 
-These are private bytes on a Windows 11 laptop in November 2026, eight seconds after starting, with blocking on and a window of 1924 by 1055 pixels. The frame itself is 7.7 MB of each number. The YouTube row is older and was measured with a smaller frame and before the paper skin.
+These are private bytes on a Windows 11 laptop in November 2026, eight seconds after starting, with blocking on and a window of 1924 by 1055 pixels. The frame itself is 7.7 MB of each number. The first three rows were measured on 28 November. The Wikipedia rows are from 25 November, with the earlier look, since Wikipedia started refusing this laptop after many test loads. The YouTube row is older still and used a smaller frame.
 
 | page | engine | memory |
 |---|---|---|
-| new tab | own | 16.6 MB |
-| Hacker News | own | 17.9 MB |
+| new tab | own | 16.5 MB |
+| Hacker News | own | 18.0 MB |
+| a Rust blog post | own | 20.6 MB |
 | a short Wikipedia article (Kamaitachi) | own | 24.6 MB |
 | a very long one (World War II) | own | 69 MB |
 | a YouTube video page | Chromium | 9 MB + 298 MB |
@@ -52,11 +53,11 @@ It needs Windows 10 or 11 and Rust 1.88 or newer. The ad blocker, [omamori](http
 
 ## two engines
 
-A page starts in the light engine. If the page is really a JavaScript application, kamaitachi reopens it in Chromium. It looks for pages with almost no text and no form, or a notice asking for JavaScript. That choice is remembered per site in `%APPDATA%\hayate\engines.txt`. A bot check opens in Chromium too, but only that once. The LITE / FULL switch in the toolbar, or `Ctrl+Shift+E`, flips it by hand.
+A page starts in the light engine. If the page is really a JavaScript application, kamaitachi reopens it in Chromium. It looks for pages with almost no text and no form, or a notice asking for JavaScript. That choice is remembered per site in `%APPDATA%\hayate\engines.txt`. A bot check opens in Chromium too, but only that once. The lite / full switch at the end of the address, or `Ctrl+Shift+E`, flips it by hand.
 
 The light engine has no JavaScript at all. It handles block, inline, float, flex, grid and table layout, CSS variables, `calc()` and media queries, and it decodes images at the size they are shown. Forms work, except for file uploads. It does not draw SVG yet.
 
-Cookies are only kept for the site in the address bar, so one set by an image or a stylesheet from elsewhere is dropped. They are stored in `%APPDATA%\hayate\cookies`, encrypted with your Windows account, and the den has a link that forgets them all. Chromium keeps its own, so signing in with one engine does not sign you in with the other.
+Cookies are only kept for the site in the address bar, so one set by an image or a stylesheet from elsewhere is dropped. They are stored in `%APPDATA%\hayate\cookies`, encrypted with your Windows account, and Settings has a button that forgets them all. Chromium keeps its own, so signing in with one engine does not sign you in with the other.
 
 Chromium starts with flags. Each one saved memory on a YouTube video page. Turning off the GPU process took the total from 631 MB to 412 MB, and V8's lite mode cut the page's renderer from 301 MB to 190 MB. Video then decodes on the CPU, which costs battery while it plays. Set `HAYATE_CHROMIUM_ARGS` to replace the flags.
 
@@ -70,17 +71,17 @@ A page that is on a malware or phishing list does not load at all. You get a war
 
 | keys | does |
 |---|---|
-| `Ctrl+L` | address bar, type an address or words to search |
+| `Ctrl+L` or `Ctrl+K` | the address field: an address, words to search, or a few letters of an open tab |
 | `Ctrl+T`, `Ctrl+W` | new tab, close tab |
-| `Ctrl+Tab`, `Ctrl+1` to `9` | next tab, a tab by number |
-| `Ctrl+K` | find a tab by a few letters of its name |
+| `Ctrl+Tab`, `Ctrl+1` to `9` | next tab, a tab by number. Hold `Ctrl` to see the numbers |
+| `Ctrl+S` | put the column of tabs away, or bring it back |
+| `Ctrl+,` | settings |
 | `Ctrl+Shift+T` | open the last closed tab again |
 | `Alt+Left`, `Alt+Right` | back, forward |
 | `Ctrl+Shift+E` | this site in the other engine |
 | `Ctrl+Shift+H` | hide a box on this site for good: point, widen with the arrows, click |
 | `Ctrl+Shift+R` | reading view |
 | `Ctrl+M` | mute a page in Chromium |
-| `Ctrl+Shift+K` | the next skin |
 | `Ctrl` `+` / `-` / `0` | zoom |
 | `F5` | reload |
 
@@ -88,13 +89,13 @@ Tabs from last time come back when kamaitachi starts, and each one loads only wh
 
 Drag an image onto the window and it becomes the new tab's wallpaper.
 
-## skins and the den
+## the look, and changing it
 
-joseon is the default look. The chrome and the new tab are a sheet of paper, drawn in graphite and cobalt ink with a wash of sky blue, and set in CMU Typewriter and CMU Serif. The pencil is drawn by the cpu into the frame, in the spirit of p5.brush but without a browser engine under it. A frame took 3.4 to 5.7 ms on the pages in the table above, plus 64 KB of paper grain. The weasel, the stamps and the season doodles are drawings kept as 65 KB of grayscale masks that the skin colors when they are printed. night is the older dark one. Three more open up as the blocker works, wave once 100 ads and trackers are blocked, then neon at 1,000 and gameboy at 10,000.
+The window is white marble with Aegean blue. The tabs are a column down the left and the page is a card beside it, with nothing above it. The address sits at the top of the column, and `Ctrl+L` brings it up over the page as a field that also finds open tabs. A tab fills with grey as you read down its page, and a tab that has let its page go is dimmed. Along the foot of the column runs a band of Greek key in gold. It is drawn as one-pixel lines, and the marble veins are two pencil strokes, so neither is kept in memory as a picture. Night puts the same layout on dark slate, with the accent made lighter so it still reads.
 
-A small weasel in the tab strip eats whatever gets blocked, and it changes form at 100, 1,000, 10,000 and 100,000. Click it to open the den, a page with the counts, ten stamps to collect and the skins you have. The counts stay in `%APPDATA%\hayate\stats.txt` and never leave the machine. There are no streaks to keep up and no notifications. All of it has to fit in 1 MB, and a test checks that.
+Settings is a page of its own, at `kamaitachi.local/settings`, with a box that finds a setting by its words. There you can pick light, dark or whatever Windows uses, one of six accent colours, the tabs on the left or the right, how wide the column is, roomier tabs, the card or edge to edge, the search engine and the page zoom. Tabs can sleep after 10, 30 or 60 minutes and close after a day or a week. Click trackers can be taken out of links, and Global Privacy Control sent with every page. Every choice is written to `%APPDATA%\hayate\settings.txt` as one `name = value` line, which can also be edited by hand.
 
-## settings
+## environment variables
 
 | variable | does |
 |---|---|
