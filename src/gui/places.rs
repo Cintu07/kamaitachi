@@ -156,7 +156,7 @@ pub(super) fn matching(q: &str, most: usize) -> Vec<(String, String, bool)> {
 
 /// Seconds this machine's clock is ahead of UTC, from what Windows says the time is in
 /// both.
-fn local_offset() -> i64 {
+pub(super) fn local_offset() -> i64 {
     use windows_sys::Win32::Foundation::SYSTEMTIME;
     use windows_sys::Win32::System::SystemInformation::{GetLocalTime, GetSystemTime};
     let z = SYSTEMTIME { wYear: 0, wMonth: 0, wDayOfWeek: 0, wDay: 0, wHour: 0, wMinute: 0, wSecond: 0, wMilliseconds: 0 };

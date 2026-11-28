@@ -477,8 +477,19 @@ impl App {
             self.gpu.draw_image(&img, b.x * k + (b.w * k - dw) / 2.0, b.y * k + (b.h * k - dh) / 2.0, dw, dh, 1.0, r, [b.x * k, b.y * k, (b.x + b.w) * k, (b.y + b.h) * k]);
         }
         let mid = b.x + b.w / 2.0;
-        // the box you type in; the field comes up in exactly its place
+        // a greeting for the time of day, in the book face
         let r = self.field_box(0);
+        let hour = ((crate::sys::now_unix() as i64 + places::local_offset()).rem_euclid(86_400) / 3600) as u32;
+        let hello = match hour {
+            5..=11 => "Good morning",
+            12..=16 => "Good afternoon",
+            17..=21 => "Good evening",
+            _ => "Up late",
+        };
+        let size = (b.h * 0.042).clamp(26.0, 36.0);
+        let hw = self.ui_text(hello, size, 400, text::SERIF, s.text).1;
+        self.label(hello, mid - hw / 2.0, r.y - size * 1.9, size, 400, s.text, hw + 4.0, text::SERIF);
+        // the box you type in; the field comes up in exactly its place
         if !self.addr_focused {
             let k = self.scale;
             let over = self.hover == Hit::Addr;
@@ -489,10 +500,9 @@ impl App {
             self.label("Search or type an address", r.x + 46.0, r.y + 15.0, 17.0, 400, s.faint, r.w - 62.0, UI_FONT);
             self.hits.push((r, Hit::Addr));
         }
-        self.meander(mid - 66.0, r.y + r.h + 30.0, 132.0, s.gold);
         let line = format!("{:.1} MB in use", private_mb() + self.full_mb);
         let lw = self.ui_text(&line, 12.5, 400, UI_FONT, s.muted).1;
-        self.label(&line, mid - lw / 2.0, r.y + r.h + 46.0, 12.5, 400, s.faint, lw + 4.0, UI_FONT);
+        self.label(&line, mid - lw / 2.0, r.y + r.h + 22.0, 12.5, 400, s.faint, lw + 4.0, UI_FONT);
     }
 
     // ---- the address field ----

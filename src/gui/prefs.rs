@@ -36,6 +36,8 @@ pub struct Prefs {
     /// faint veins in the marble of the column
     pub veins: bool,
     pub contrast: bool,
+    /// the welcome has been shown
+    pub welcomed: bool,
     /// the window stays open on a new tab when its last tab closes
     pub keep_window: bool,
     /// the column stays out of the way until the mouse reaches its edge of the window
@@ -93,6 +95,7 @@ impl Default for Prefs {
             meander: true,
             veins: true,
             contrast: false,
+            welcomed: false,
             keep_window: false,
             autohide: false,
             darken: true,
@@ -207,6 +210,7 @@ impl Prefs {
             "meander" => self.meander,
             "veins" => self.veins,
             "contrast" => self.contrast,
+            "welcomed" => self.welcomed,
             "keep_window" => self.keep_window,
             "autohide" => self.autohide,
             "darken" => self.darken,
@@ -282,6 +286,7 @@ impl Prefs {
                     "meander" => &mut self.meander,
                     "veins" => &mut self.veins,
                     "contrast" => &mut self.contrast,
+                    "welcomed" => &mut self.welcomed,
                     "keep_window" => &mut self.keep_window,
                     "autohide" => &mut self.autohide,
                     "darken" => &mut self.darken,

@@ -149,7 +149,7 @@ impl App {
                     }
                     Act::Sleep => {
                         self.sleep_tab(i);
-                        self.say("the tab let its page go");
+                        self.say("sleeping now, it wakes when you come back");
                     }
                     Act::Bookmark => {
                         let on = places::toggle_mark(&self.tabs[i].url, &self.tabs[i].title);

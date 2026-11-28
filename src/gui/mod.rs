@@ -16,6 +16,7 @@ mod prefs;
 mod settings;
 mod shell;
 mod tabs;
+mod welcome;
 pub mod full;
 pub mod gpu;
 pub mod image;
@@ -432,7 +433,13 @@ pub fn run(urls: Vec<String>) -> Result<(), String> {
             }
         } else if !restored {
             app.new_tab(START);
-            app.focus_addr();
+            // the first time, a few questions instead of an empty page
+            if !prefs::get().welcomed && (app.shot.is_none() || std::env::var_os("HAYATE_WELCOME").is_some()) {
+                let c = app.cur;
+                app.show_welcome(c);
+            } else {
+                app.focus_addr();
+            }
         }
         app.update_views();
         SetTimer(Some(hwnd), 6, 60_000, None);
@@ -1029,6 +1036,8 @@ impl App {
         let mut images = Images::default();
         let dl = layout::layout(&doc.dom, &styles, &mut self.dw, &mut images, &doc.base, vw, vh);
         let t = &mut self.tabs[i];
+        // a page still loading in this tab would land on top of this one
+        t.seq += 1;
         t.title = title.into();
         t.dl = Some(dl);
         t.own = true;
@@ -1417,7 +1426,16 @@ impl App {
             }
             if let Some(q) = rest.strip_prefix("set?") {
                 let section = self.take_setting(q);
+                if section == "welcome" {
+                    return self.show_welcome(i);
+                }
                 return self.show_settings(i, "", &section, false);
+            }
+            if rest == "welcome" {
+                return self.show_welcome(i);
+            }
+            if rest == "begin" {
+                return self.begin(i);
             }
             if let Some(f) = rest.strip_prefix("openfile?f=") {
                 places::open_file(&crate::url::percent_decode(f), false);
