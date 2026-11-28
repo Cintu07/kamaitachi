@@ -36,6 +36,7 @@ impl App {
         if self.shot.is_some() {
             return;
         }
+        places::save();
         let mut out = format!("cur\t{}\n", self.cur);
         for t in &self.tabs {
             // a tab still asleep keeps the place it had

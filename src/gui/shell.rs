@@ -23,6 +23,8 @@ pub(super) enum Suggest {
     Go(String),
     /// an open tab whose name or address matches
     Tab(usize),
+    /// a bookmark (true) or a place from history: its address and title
+    Place(String, String, bool),
 }
 
 impl App {
@@ -178,7 +180,7 @@ impl App {
             let cw = self.ui_text(chip, 11.0, 600, UI_FONT, s.muted).1 + 14.0;
             let ours = url.starts_with("https://kamaitachi.local/");
             let on_page = url != START && !url.is_empty();
-            let room = r.w - 20.0 - if on_page && !ours { cw + 6.0 } else { 0.0 };
+            let room = r.w - 20.0 - if on_page && !ours { cw + 30.0 } else { 0.0 };
             if on_page {
                 let rest = url.trim_start_matches("https://");
                 let (host, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
@@ -187,6 +189,13 @@ impl App {
                 let hw = self.label(&host, r.x + 11.0, r.y + 8.0, 13.0, 500, s.text, room, UI_FONT);
                 self.label(&path, r.x + 11.0 + hw, r.y + 8.0, 13.0, 400, s.muted, (room - hw).max(0.0), UI_FONT);
                 if !ours {
+                    let marked = places::marked(&url);
+                    let star = Rect::new(r.x + r.w - cw - 30.0, r.y + 6.0, 20.0, 20.0);
+                    if marked || hover == Hit::Addr || hover == Hit::Star {
+                        let col = if marked { s.gold } else if hover == Hit::Star { s.text } else { s.faint };
+                        self.icon(if marked { '\u{E735}' } else { '\u{E734}' }, star.x + 10.0, star.y + 10.0, 11.0, col);
+                    }
+                    self.hits.push((star, Hit::Star));
                     let c = Rect::new(r.x + r.w - cw - 5.0, r.y + 6.0, cw, 20.0);
                     self.rect(c, if hover == Hit::Engine { s.wash } else { s.field }, 6.0);
                     self.label(chip, c.x + 7.0, c.y + 3.0, 11.0, 600, if full { s.accent } else { s.muted }, cw, UI_FONT);
@@ -277,11 +286,19 @@ impl App {
         }
         self.icon('\u{E713}', gear.x + 14.0, gear.y + 14.0, 13.0, s.muted);
         self.hits.push((gear, Hit::Settings));
+        for (k, (glyph, hit)) in [('\u{E728}', Hit::Page("bookmarks")), ('\u{E81C}', Hit::Page("history"))].into_iter().enumerate() {
+            let r = Rect::new(gear.x + 30.0 * (k + 1) as f32, fy, 28.0, 28.0);
+            if hover == hit {
+                self.rect(r, s.hover, 7.0);
+            }
+            self.icon(glyph, r.x + 14.0, r.y + 14.0, 13.0, s.muted);
+            self.hits.push((r, hit));
+        }
         let mut foot = format!("{:.1} MB", private_mb() + self.full_mb);
         if self.tab().blocked > 0 {
             foot.push_str(&format!("  ·  {} blocked", self.tab().blocked));
         }
-        self.label(&foot, x0 + 44.0, fy + 6.0, 12.0, 400, s.muted, w - 54.0, UI_FONT);
+        self.label(&foot, x0 + 104.0, fy + 6.0, 12.0, 400, s.muted, w - 114.0, UI_FONT);
         if p.meander {
             self.meander(x0 + 12.0, h - 9.0, w - 24.0, s.gold);
         }
@@ -389,7 +406,10 @@ impl App {
             return v;
         }
         v.push(Suggest::Go(q.to_string()));
-        v.extend(self.tabs_matching(q).into_iter().filter(|&i| i != self.cur).take(5).map(Suggest::Tab));
+        let tabs: Vec<usize> = self.tabs_matching(q).into_iter().filter(|&i| i != self.cur).take(3).collect();
+        let open: Vec<String> = tabs.iter().map(|&i| self.tabs[i].url.clone()).collect();
+        v.extend(tabs.into_iter().map(Suggest::Tab));
+        v.extend(places::matching(q, 8).into_iter().filter(|p| !open.contains(&p.0)).take(5).map(|(u, t, m)| Suggest::Place(u, t, m)));
         v
     }
 
@@ -451,6 +471,7 @@ impl App {
                 Suggest::Go(q) if crate::url::looks_like_address(q) => ('\u{E774}', q.clone(), "Go".to_string()),
                 Suggest::Go(q) => ('\u{E721}', q.clone(), format!("Search {engine}")),
                 Suggest::Tab(t) => ('\u{E8A5}', self.tabs[*t].title.clone(), "Switch to tab".to_string()),
+                Suggest::Place(u, t, m) => (if *m { '\u{E735}' } else { '\u{E81C}' }, if t.is_empty() { u.trim_start_matches("https://").to_string() } else { t.clone() }, u.trim_start_matches("https://").split('/').next().unwrap_or("").trim_start_matches("www.").to_string()),
             };
             self.icon(glyph, rr.x + 18.0, rr.y + rr.h / 2.0, 12.0, s.muted);
             let sw = self.ui_text(&side, 12.0, 400, UI_FONT, s.faint).1;
@@ -479,6 +500,7 @@ impl App {
                 self.pick_tab(t);
             }
             Some(Suggest::Go(q)) => self.navigate(&q, false),
+            Some(Suggest::Place(u, _, _)) => self.navigate(&u, false),
             None => {}
         }
     }

@@ -8,6 +8,7 @@ mod drive;
 mod fields;
 mod find;
 mod pick;
+mod places;
 mod prefs;
 mod settings;
 mod shell;
@@ -189,6 +190,10 @@ enum Hit {
     Suggest(usize),
     /// the address field's panel, which a click inside keeps open
     Panel,
+    /// the star in the address: bookmark the page
+    Star,
+    /// one of the browser's own pages, from the foot of the column
+    Page(&'static str),
 }
 
 struct App {
@@ -547,7 +552,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 if (lp.0 & 0xFFFF) as u32 == HTCLIENT {
                     let c = if app.over == Some(true) {
                         IDC_IBEAM
-                    } else if app.over == Some(false) || app.hover_link.is_some() || matches!(app.hover, Hit::Tab(_) | Hit::Close(_) | Hit::NewTab | Hit::Back | Hit::Fwd | Hit::Reload | Hit::Engine | Hit::Settings | Hit::Mute(_) | Hit::Suggest(_)) {
+                    } else if app.over == Some(false) || app.hover_link.is_some() || matches!(app.hover, Hit::Tab(_) | Hit::Close(_) | Hit::NewTab | Hit::Back | Hit::Fwd | Hit::Reload | Hit::Engine | Hit::Settings | Hit::Mute(_) | Hit::Suggest(_) | Hit::Star | Hit::Page(_)) {
                         IDC_HAND
                     } else if app.hover == Hit::Addr {
                         IDC_IBEAM
@@ -1247,6 +1252,7 @@ impl App {
                     if let Some(t) = self.tabs.iter_mut().find(|t| t.id == tab && t.full_mode)
                         && !title.is_empty()
                     {
+                        places::visit(&t.url, &title);
                         t.title = title;
                     }
                     self.update_title();
@@ -1358,6 +1364,21 @@ impl App {
             if let Some(q) = rest.strip_prefix("set?") {
                 let section = self.take_setting(q);
                 return self.show_settings(i, "", &section, false);
+            }
+            for name in ["history", "bookmarks"] {
+                if let Some(q) = rest.strip_prefix(name) {
+                    let find = q.strip_prefix("?q=").map(crate::url::percent_decode).unwrap_or_default();
+                    return self.show_place(i, name, &find, push);
+                }
+            }
+            if let Some(u) = rest.strip_prefix("unmark?u=") {
+                places::toggle_mark(&crate::url::percent_decode(u), "");
+                return self.show_place(i, "bookmarks", "", false);
+            }
+            if rest == "clearhistory" {
+                places::clear_history();
+                self.say("history cleared");
+                return self.show_place(i, "history", "", false);
             }
             if rest == "forget" {
                 cookies::forget();
@@ -1511,6 +1532,9 @@ impl App {
                     t.target = y;
                 }
                 Msg::Done { tab, seq, page, dl, pixels, blocked } => {
+                    if let Some(t) = self.tabs.iter().find(|t| t.id == tab && t.seq == seq) {
+                        places::visit(&t.url, &dl.title);
+                    }
                     let Some(i) = self.tabs.iter().position(|t| t.id == tab && t.seq == seq) else { continue };
                     let mut tex = HashMap::new();
                     for (id, w, h, px) in pixels {
@@ -1766,6 +1790,15 @@ impl App {
                 VK_R if shift => self.toggle_reading(),
                 VK_K if !shift => self.focus_addr(),
                 VK_F if !shift => self.open_find(),
+                VK_D if !shift => self.bookmark(),
+                VK_H if !shift => {
+                    let c = self.cur;
+                    self.show_place(c, "history", "", true);
+                }
+                VK_O if shift => {
+                    let c = self.cur;
+                    self.show_place(c, "bookmarks", "", true);
+                }
                 VK_M => self.toggle_mute(),
                 VK_S => {
                     self.column_hidden = !self.column_hidden;
@@ -1916,6 +1949,14 @@ impl App {
                 self.cur = keep;
             }
             Hit::Suggest(i) => self.take_suggestion(i),
+            Hit::Star => self.bookmark(),
+            Hit::Page(name) => {
+                if self.tab().url != START {
+                    self.new_tab(START);
+                }
+                let c = self.cur;
+                self.show_place(c, name, "", false);
+            }
             Hit::Panel => {}
             Hit::Close(i) => self.close_tab(i),
             Hit::NewTab => {

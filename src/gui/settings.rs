@@ -102,6 +102,10 @@ const KEYS: &[(&str, &str)] = &[
     ("Ctrl+Shift+H", "hide a box on this site for good"),
     ("Ctrl+Shift+R", "reading view"),
     ("Ctrl+M", "mute a page in Chromium"),
+    ("Ctrl+F", "find on this page"),
+    ("Ctrl+D", "bookmark this page"),
+    ("Ctrl+H", "history"),
+    ("Ctrl+Shift+O", "bookmarks"),
     ("Ctrl+,", "these settings"),
 ];
 
