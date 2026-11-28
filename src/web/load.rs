@@ -175,6 +175,8 @@ pub struct Doc {
     pub sheets: Vec<Arc<Sheet>>,
     /// requests the blocker stopped while loading
     pub blocked: u32,
+    /// which of `sheets` holds what you hid on this site, so it can be changed in place
+    pub hidden: usize,
     pub kind: u8,
 }
 
@@ -314,6 +316,9 @@ pub fn from_html(html: &str, url: Url, kind: u8) -> Doc {
         }
         sheets.push(Arc::new(sheet));
     }
+    // what you hid here, last, so it wins over the page's own rules
+    let hidden = sheets.len();
+    sheets.push(Arc::new(parse_sheet(&super::hide::css(&page_host))));
     // ads and trackers the page would show: hidden
     if let Some(b) = &blocker {
         let specific = b.site_hiding(&page_host);
@@ -321,7 +326,7 @@ pub fn from_html(html: &str, url: Url, kind: u8) -> Doc {
             sheets.push(Arc::new(parse_sheet(&specific)));
         }
     }
-    Doc { url, base, dom, sheets, kind, blocked }
+    Doc { url, base, dom, sheets, kind, blocked, hidden }
 }
 
 /// Fetches stylesheets in parallel, in order; None for each that failed.

@@ -89,6 +89,7 @@ struct Mark {
     glyphs: usize,
     links: usize,
     clips: usize,
+    boxes: usize,
 }
 
 #[derive(Clone, Copy, Default, Debug)]
@@ -148,6 +149,8 @@ fn fallback_style() -> &'static Style {
 }
 
 pub struct Layout<'a> {
+    /// keep every box in out.boxes
+    record: bool,
     dom: &'a Dom,
     st: &'a Styles,
     text: &'a mut dyn TextEngine,
@@ -167,8 +170,19 @@ pub struct Layout<'a> {
 
 /// Lays out a document for a viewport `vw` css px wide.
 pub fn layout(dom: &Dom, st: &Styles, text: &mut dyn TextEngine, img: &mut Images, base: &Url, vw: f32, vh: f32) -> DisplayList {
+    run(dom, st, text, img, base, vw, vh, false)
+}
+
+/// The same, with every box it placed in `boxes`, so a point can be traced back to an
+/// element. Only the hiding picker wants that, and only while it is open.
+pub fn layout_boxes(dom: &Dom, st: &Styles, text: &mut dyn TextEngine, img: &mut Images, base: &Url, vw: f32, vh: f32) -> DisplayList {
+    run(dom, st, text, img, base, vw, vh, true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run(dom: &Dom, st: &Styles, text: &mut dyn TextEngine, img: &mut Images, base: &Url, vw: f32, vh: f32, record: bool) -> DisplayList {
     let html = dom.find(t::html).unwrap_or(0);
-    let mut lx = Layout { dom, st, text, out: DisplayList::new(), img, base, vw, vh, abs: vec![Vec::new()], intr: HashMap::new(), blockish: HashMap::new(), canvas: NONE, root: html, depth: 0 };
+    let mut lx = Layout { record, dom, st, text, out: DisplayList::new(), img, base, vw, vh, abs: vec![Vec::new()], intr: HashMap::new(), blockish: HashMap::new(), canvas: NONE, root: html, depth: 0 };
     let body = dom.find(t::body).unwrap_or(NONE);
     let hs = lx.style(html);
     if hs.bg[3] > 0 {
@@ -251,7 +265,7 @@ impl<'a> Layout<'a> {
     }
 
     fn mark(&self) -> Mark {
-        Mark { items: self.out.items.len(), glyphs: self.out.glyphs.len(), links: self.out.links.len(), clips: self.out.clips.len() }
+        Mark { items: self.out.items.len(), glyphs: self.out.glyphs.len(), links: self.out.links.len(), clips: self.out.clips.len(), boxes: self.out.boxes.len() }
     }
 
     /// Children in box order: ::before, the element's children (display: contents
@@ -497,6 +511,9 @@ impl<'a> Layout<'a> {
                 bo.y += dy;
             }
         }
+        if self.record && s.visible {
+            self.out.boxes.push((n, Rect::new(bo.x, bo.y, bo.w, bo.h)));
+        }
         bo
     }
 
@@ -598,6 +615,11 @@ impl<'a> Layout<'a> {
         bo.h = h;
         let s = self.style(n);
         self.fill_deco(n, s, bo);
+        // its own box was recorded at the old size, and a move of its contents took it along
+        let r = Rect::new(bo.x, bo.y, bo.w, h);
+        for b in self.out.boxes[bo.start.boxes..bo.end.boxes].iter_mut().filter(|b| b.0 == n) {
+            b.1 = r;
+        }
     }
 
     fn translate(&mut self, from: Mark, dx: f32, dy: f32) {
@@ -627,6 +649,10 @@ impl<'a> Layout<'a> {
         for c in &mut self.out.clips[from.clips.max(1)..to.clips.max(1)] {
             c.x += dx;
             c.y += dy;
+        }
+        for (_, r) in &mut self.out.boxes[from.boxes..to.boxes] {
+            r.x += dx;
+            r.y += dy;
         }
     }
 
@@ -691,6 +717,7 @@ impl<'a> Layout<'a> {
             }
             self.out.items.push(it);
         }
+        self.out.boxes.extend(frag.boxes.iter().map(|(n, r)| (*n, Rect::new(r.x + dx, r.y + dy, r.w, r.h))));
         for l in frag.links {
             self.out.links.push(Link { r: Rect::new(l.r.x + dx, l.r.y + dy, l.r.w, l.r.h), href: l.href + hbase });
         }
@@ -2221,8 +2248,12 @@ impl<'a> Layout<'a> {
                     self.resize(c, &mut bo, h);
                 }
             }
+            let row_r = Rect::new(cx + sp, y, x - cx - 2.0 * sp, h);
             if let Some(i) = row_bg {
-                self.out.items[i] = Item::Rect { r: Rect::new(cx + sp, y, x - cx - 2.0 * sp, h), color: rs.bg, radius: 0.0, clip: 0 };
+                self.out.items[i] = Item::Rect { r: row_r, color: rs.bg, radius: 0.0, clip: 0 };
+            }
+            if self.record && self.dom.tag(row) == t::tr {
+                self.out.boxes.push((row, row_r));
             }
             y += h + sp;
         }
@@ -2593,6 +2624,25 @@ pub mod tests {
         assert!(dl.field_at(r.x - 8.0, r.y).is_none());
         let pressed: std::collections::HashSet<&str> = dl.links.iter().map(|l| dl.hrefs[l.href as usize].as_str()).filter(|h| h.starts_with(PRESS)).collect();
         assert_eq!(pressed.len(), 2, "the label and the button");
+    }
+
+    /// The hiding picker finds the innermost box under a point, so every box has to be
+    /// where it was drawn, table cells and rows too.
+    #[test]
+    fn recorded_boxes_are_where_they_are_drawn() {
+        let dom = parse("<table><tr><td>short</td><td>a much longer cell<br>on two lines</td></tr><tr id=b><td>x</td></tr></table>");
+        let ua = crate::web::css::parse_sheet(include_str!("ua.css"));
+        let sheets = vec![std::sync::Arc::new(ua)];
+        let st = Cascade { dom: &dom, sheets: &sheets, vw: 600.0, vh: 600.0 }.run();
+        let base = Url::parse("https://example.com/").unwrap();
+        let dl = layout_boxes(&dom, &st, &mut Mono, &mut Images::default(), &base, 600.0, 600.0);
+        let cells: Vec<Rect> = dl.boxes.iter().filter(|(n, _)| dom.tag(*n) == t::td).map(|b| b.1).collect();
+        assert_eq!(cells.len(), 3);
+        // the short cell is stretched to its row, and both start at the row's top
+        assert_eq!((cells[0].y, cells[0].h), (cells[1].y, cells[1].h));
+        let rows: Vec<Rect> = dl.boxes.iter().filter(|(n, _)| dom.tag(*n) == t::tr).map(|b| b.1).collect();
+        assert_eq!(rows.len(), 2);
+        assert!(rows[1].y >= cells[0].y + cells[0].h && rows[1].contains(rows[1].x + 1.0, rows[1].y + 1.0));
     }
 
     #[test]

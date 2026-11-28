@@ -3,7 +3,8 @@
 //! nothing is sent to the desktop and no window is shown.
 //!
 //! HAYATE_DO="on q; type weasel; key enter" searches. The steps are: `on NAME` (click the
-//! control with that name), `click X Y` (page css px from the top of the window's page),
+//! control with that name), `click X Y` and `move X Y` (page css px from the top of the
+//! window's page),
 //! `type TEXT`, and `key` with enter, tab, escape, up, down, back, ctrl+a and so on.
 
 use super::*;
@@ -32,6 +33,12 @@ impl App {
                 let k = self.k();
                 if let Some((x, y)) = rest.split_once(' ').and_then(|(x, y)| Some((x.parse::<f32>().ok()?, y.parse::<f32>().ok()?))) {
                     self.click(x * k, TOP * self.scale + y * k, Mods::default());
+                }
+            }
+            "move" => {
+                let k = self.k();
+                if let Some((x, y)) = rest.split_once(' ').and_then(|(x, y)| Some((x.parse::<f32>().ok()?, y.parse::<f32>().ok()?))) {
+                    self.mouse_move(x * k, TOP * self.scale + y * k);
                 }
             }
             "type" => rest.chars().for_each(|c| self.type_char(c)),

@@ -7,9 +7,11 @@ pub mod block;
 pub mod css;
 pub mod dom;
 pub mod form;
+pub mod hide;
 pub mod layout;
 pub mod load;
 pub mod parse;
+pub mod read;
 pub mod style;
 
 use std::sync::Arc;
@@ -123,6 +125,8 @@ pub struct DisplayList {
     pub links: Vec<Link>,
     pub hrefs: Vec<String>,
     pub fields: Vec<Field>,
+    /// every box laid out, innermost first; only filled for the hiding picker
+    pub boxes: Vec<(dom::NodeId, Rect)>,
     pub height: f32,
     pub width: f32,
     /// the canvas: the root or body background

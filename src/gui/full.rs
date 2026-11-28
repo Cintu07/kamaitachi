@@ -178,8 +178,11 @@ pub fn wire(ctl: &ICoreWebView2Controller, tab: u64, env: Option<ICoreWebView2En
         wv.add_ContentLoading(
             &ContentLoadingEventHandler::create(Box::new(move |w, _| {
                 let Some(w) = w else { return Ok(()) };
-                let Some(b) = crate::web::block::get() else { return Ok(()) };
-                let css = b.site_hiding(&host_of(&source(&w)));
+                let host = host_of(&source(&w));
+                let mut css = crate::web::hide::css(&host);
+                if let Some(b) = crate::web::block::get() {
+                    css.push_str(&b.site_hiding(&host));
+                }
                 if !css.is_empty() {
                     let js = format!("(()=>{{const s=document.createElement('style');s.textContent={};(document.head||document.documentElement).appendChild(s)}})()", json_str(&css));
                     let _ = w.ExecuteScript(&HSTRING::from(js), &ExecuteScriptCompletedHandler::create(Box::new(|_, _| Ok(()))));
@@ -268,7 +271,8 @@ pub fn wire(ctl: &ICoreWebView2Controller, tab: u64, env: Option<ICoreWebView2En
                 let ours = if alt {
                     matches!(vk, 0x25 | 0x27 | 0x44)
                 } else if ctrl {
-                    matches!(vk, 0x4C | 0x54 | 0x57 | 0x09 | 0x31..=0x39) || (shift && vk == 0x45)
+                    // L T W Tab 1-9, K to find a tab, M to mute, shift+E to switch engines
+                    matches!(vk, 0x4C | 0x54 | 0x57 | 0x09 | 0x31..=0x39) || (!shift && vk == 0x4B) || vk == 0x4D || (shift && vk == 0x45)
                 } else {
                     matches!(vk, 0x74 | 0x75)
                 };
@@ -357,6 +361,15 @@ pub fn can(wv: &ICoreWebView2) -> (bool, bool) {
         let _ = wv.CanGoForward(&mut f);
     }
     (b.as_bool(), f.as_bool())
+}
+
+/// Turns a page's sound off or on.
+pub fn mute(wv: &ICoreWebView2, on: bool) {
+    if let Ok(w8) = wv.cast::<webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_8>() {
+        unsafe {
+            let _ = w8.SetIsMuted(on);
+        }
+    }
 }
 
 pub fn focus(ctl: &ICoreWebView2Controller) {

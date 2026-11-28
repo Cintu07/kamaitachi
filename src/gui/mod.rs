@@ -8,6 +8,8 @@ pub mod brush;
 mod drawn;
 mod drive;
 mod fields;
+mod pick;
+mod tabs;
 pub mod full;
 pub mod gpu;
 pub mod image;
@@ -131,6 +133,46 @@ struct Tab {
     blocked: u32,
     /// the page was made here (the den, a warning), so its links may change settings
     own: bool,
+    /// back from last session and not loaded yet; it loads when it is shown
+    asleep: bool,
+    muted: bool,
+    /// showing the reading view of `url`
+    reading: bool,
+}
+
+impl Tab {
+    fn new(id: u64) -> Tab {
+        Tab {
+            id,
+            url: String::new(),
+            title: "New tab".into(),
+            page: None,
+            dl: None,
+            scroll: 0.0,
+            target: 0.0,
+            back: Vec::new(),
+            fwd: Vec::new(),
+            loading: false,
+            seq: 0,
+            tex: HashMap::new(),
+            restore: None,
+            vw: 0.0,
+            full_mode: false,
+            full: None,
+            pending: None,
+            requested: false,
+            parked: false,
+            picture: None,
+            picture_img: None,
+            shot_at: None,
+            used: Instant::now(),
+            blocked: 0,
+            own: false,
+            asleep: false,
+            muted: false,
+            reading: false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -169,6 +211,10 @@ struct App {
     /// the control of a page being used, and the list it has open
     focus: Option<Focus>,
     menu: Option<Menu>,
+    /// tabs closed, the last one last
+    closed: Vec<tabs::Closed>,
+    finder: Option<tabs::Finder>,
+    picking: Option<pick::Pick>,
     /// the mouse is over a box to type in, or something to press
     over: Option<bool>,
     /// the first half of a character that arrives as two messages, an emoji say
@@ -243,6 +289,9 @@ pub fn run(urls: Vec<String>) -> Result<(), String> {
     unsafe {
         // the full engine needs a single-threaded apartment on this thread
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        if std::env::var_os("HAYATE_SHOT").is_some() {
+            test_profile();
+        }
         crate::web::block::start();
         load_cookies();
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -314,6 +363,9 @@ pub fn run(urls: Vec<String>) -> Result<(), String> {
             addr_focused: false,
             focus: None,
             menu: None,
+            closed: Vec::new(),
+            finder: None,
+            picking: None,
             over: None,
             half: 0,
             last_click: (Instant::now(), -100.0, -100.0),
@@ -341,13 +393,18 @@ pub fn run(urls: Vec<String>) -> Result<(), String> {
         app.stats = Stats::load();
         skin::load(app.stats.blocked);
         app.sync_size();
-        app.new_tab(url.as_deref().unwrap_or(START));
-        for u in urls.iter().skip(1) {
-            app.navigate(u, true);
-        }
-        if url.is_none() {
+        // a test render starts from nothing; otherwise last session's tabs come back
+        let restored = (app.shot.is_none() || std::env::var_os("HAYATE_RESTORE").is_some()) && app.restore_session();
+        if let Some(u) = &url {
+            app.new_tab(u);
+            for u in urls.iter().skip(1) {
+                app.navigate(u, true);
+            }
+        } else if !restored {
+            app.new_tab(START);
             app.focus_addr();
         }
+        app.update_views();
         // test shots render into a window that is never shown, off every screen
         if app.shot.is_none() {
             let _ = ShowWindow(hwnd, SW_SHOW);
@@ -398,6 +455,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         match msg {
             WM_DESTROY => {
                 app.stats.save();
+                app.save_session();
                 save_cookies();
                 PostQuitMessage(0);
                 LRESULT(0)
@@ -439,6 +497,11 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 }
                 if wp.0 == 2 {
                     app.measure_full();
+                    return LRESULT(0);
+                }
+                if wp.0 == 5 {
+                    let _ = KillTimer(Some(hwnd), 5);
+                    app.save_session();
                     return LRESULT(0);
                 }
                 let _ = KillTimer(Some(hwnd), wp.0);
@@ -526,7 +589,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             }
             WM_MOUSEWHEEL => {
                 let d = ((wp.0 >> 16) & 0xFFFF) as i16 as f32 / 120.0;
-                if app.scroll_menu(-d as i32 * 3) {
+                if app.pick_wheel(d > 0.0) {
+                } else if app.scroll_menu(-d as i32 * 3) {
                     app.render();
                 } else if key_down(VK_CONTROL) {
                     app.set_zoom(app.zoom * if d > 0.0 { 1.1 } else { 1.0 / 1.1 });
@@ -559,6 +623,17 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             _ => DefWindowProcW(hwnd, msg, wp, lp),
         }
     }
+}
+
+/// Points a test render at a profile of its own in %TEMP%, so nothing it does (cookies,
+/// sites it learns need Chromium, hidden boxes, counts) lands in the real one. It keeps
+/// reading the real filter lists, which are slow to download. This runs before any
+/// other thread exists, and Windows guards its environment block with a lock anyway.
+fn test_profile() {
+    crate::web::block::set_dir(wall_dir().join("filters"));
+    let test = std::env::temp_dir().join("kamaitachi-test");
+    let _ = std::fs::create_dir_all(test.join("hayate"));
+    unsafe { std::env::set_var("APPDATA", &test) };
 }
 
 /// Where sign-ins are kept between runs, readable only by this Windows user.
@@ -608,7 +683,9 @@ fn load_page(req: load::Request, vw: f32, vh: f32, dpr: f32, tab: u64, seq: u64,
         let dl = layout::layout(&doc.dom, &styles, &mut dw, &mut images, &doc.base, vw, vh);
         let final_url = if url == START { START.to_string() } else { doc.url.full() };
         let check = url != START && load::bot_check(&doc, &dl);
-        if check || (url != START && load::needs_js(&doc, &dl)) {
+        // a page you hid most of is not a page that needs JavaScript
+        let trimmed = crate::web::hide::count(&doc.url.host) > 0;
+        if check || (url != START && !trimmed && load::needs_js(&doc, &dl)) {
             shared.post(Msg::NeedsJs { tab, seq, url: final_url, learn: !check });
             return Ok(());
         }
@@ -922,7 +999,7 @@ impl App {
     fn new_tab(&mut self, url: &str) {
         let id = self.next_id;
         self.next_id += 1;
-        self.tabs.push(Tab { id, url: String::new(), title: "New tab".into(), page: None, dl: None, scroll: 0.0, target: 0.0, back: Vec::new(), fwd: Vec::new(), loading: false, seq: 0, tex: HashMap::new(), restore: None, vw: 0.0, full_mode: false, full: None, pending: None, requested: false, parked: false, picture: None, picture_img: None, shot_at: None, used: Instant::now(), blocked: 0, own: false });
+        self.tabs.push(Tab::new(id));
         self.cur = self.tabs.len() - 1;
         self.load(self.cur, url.to_string(), false);
     }
@@ -942,6 +1019,7 @@ impl App {
                 let _ = f.ctl.Close();
             }
         }
+        self.remember_closed(i);
         self.tabs.remove(i);
         if self.tabs.is_empty() {
             self.new_tab(START);
@@ -1086,6 +1164,8 @@ impl App {
         if let Some(i) = wake {
             self.wake(i);
         }
+        self.wake_asleep();
+        self.session_changed();
     }
 
     /// Brings a parked tab back: its picture shows until the page is live again.
@@ -1237,6 +1317,9 @@ impl App {
                             if let Some(u) = self.tabs[i].pending.take() {
                                 full::navigate(&wv, &u);
                             }
+                            if self.tabs[i].muted {
+                                full::mute(&wv, true);
+                            }
                             self.tabs[i].full = Some(FullView { ctl, wv });
                             self.tabs[i].requested = false;
                             self.tabs[i].parked = false;
@@ -1356,7 +1439,11 @@ impl App {
         if i == self.cur {
             self.focus = None;
             self.menu = None;
+            self.picking = None;
         }
+        self.tabs[i].reading = false;
+        self.tabs[i].asleep = false;
+        self.session_changed();
         if let Some(rest) = url.strip_prefix("https://kamaitachi.local/") {
             if rest == "den" {
                 return self.show_den(i, push);
@@ -1658,7 +1745,7 @@ impl App {
 
     /// A character from the keyboard.
     fn type_char(&mut self, c: char) {
-        if self.menu_char(c) {
+        if self.finder_char(c) || self.menu_char(c) {
         } else if self.addr_focused {
             self.edit.insert(&c.to_string());
         } else if self.typing() {
@@ -1743,6 +1830,9 @@ impl App {
     /// Returns true when the key was used.
     fn key(&mut self, vk: VIRTUAL_KEY, m: Mods) -> bool {
         let Mods { ctrl, shift, alt } = m;
+        if self.finder_key(vk, m) || self.pick_key(vk) {
+            return true;
+        }
         if alt {
             match vk {
                 VK_LEFT => self.go_back(),
@@ -1765,6 +1855,11 @@ impl App {
             match vk {
                 VK_L => self.focus_addr(),
                 VK_E if shift => self.toggle_engine(),
+                VK_T if shift => self.reopen_closed(),
+                VK_H if shift => self.start_pick(),
+                VK_R if shift => self.toggle_reading(),
+                VK_K if !shift => self.open_finder(),
+                VK_M => self.toggle_mute(),
                 VK_K if shift => {
                     let s = skin::next(self.stats.blocked);
                     skin::wear(s);
@@ -1864,7 +1959,7 @@ impl App {
 
     fn mouse_move(&mut self, x: f32, y: f32) {
         self.mouse = (x, y);
-        if self.hover_menu(x, y) || self.drag_field(x, y) {
+        if (y > TOP * self.scale && self.pick_hover(x, y)) || self.hover_menu(x, y) || self.drag_field(x, y) {
             return self.render();
         }
         self.over = self.control_at(x, y).map(|(_, c, _)| c.typed());
@@ -1887,6 +1982,10 @@ impl App {
         self.mouse_move(x, y);
         let (t, lx, ly) = self.last_click;
         let double = t.elapsed().as_millis() < unsafe { GetDoubleClickTime() } as u128 && (x - lx).abs() + (y - ly).abs() < 8.0;
+        if self.finder_click(x, y) || (y > TOP * self.scale && self.pick_click()) {
+            return self.render();
+        }
+        self.picking = None;
         self.last_click = (if double { t - std::time::Duration::from_secs(9).min(t.elapsed()) } else { Instant::now() }, x, y);
         match self.hit(x, y) {
             Hit::Tab(i) => {
@@ -2007,9 +2106,11 @@ impl App {
         let t0 = Instant::now();
         self.gpu.begin(bg);
         self.draw_page();
+        self.draw_pick();
         let t1 = t0.elapsed();
         self.draw_chrome();
         self.draw_menu();
+        self.draw_finder();
         if std::env::var_os("HAYATE_FRAMES").is_some() {
             eprintln!("frame {:.2} ms (page {:.2})", t0.elapsed().as_secs_f64() * 1000.0, t1.as_secs_f64() * 1000.0);
         }
