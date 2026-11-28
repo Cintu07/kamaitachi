@@ -261,9 +261,47 @@ pub fn simple(host: Host, plain: Option<&str>, method: &str, target: &[u8], head
     full(host, plain, method, target, headers, body).map(|(r, b)| (r.status, b))
 }
 
+/// Connections kept open after a request, for the next one to the same site. Opening
+/// one costs a TCP and a TLS handshake, half a second to a far server; a page and its
+/// stylesheets and images mostly come from one or two sites.
+fn idle() -> &'static std::sync::Mutex<Vec<Conn>> {
+    static IDLE: OnceLock<std::sync::Mutex<Vec<Conn>>> = OnceLock::new();
+    IDLE.get_or_init(Default::default)
+}
+
+/// Servers drop idle connections after a while; one older than this is not trusted.
+const IDLE_FOR: Duration = Duration::from_secs(25);
+const IDLE_MOST: usize = 12;
+
+fn take_idle(host: Host) -> Option<Conn> {
+    let mut v = idle().lock().unwrap_or_else(|e| e.into_inner());
+    v.retain(|c| c.last_used.elapsed() < IDLE_FOR);
+    let i = v.iter().position(|c| c.host == host)?;
+    Some(v.swap_remove(i))
+}
+
+fn put_idle(c: Conn) {
+    let mut v = idle().lock().unwrap_or_else(|e| e.into_inner());
+    if v.len() >= IDLE_MOST {
+        v.remove(0);
+    }
+    v.push(c);
+}
+
 /// One blocking request; the response head (status, location, content type) and body.
+/// It goes on a connection kept from an earlier request to the same site when there is
+/// one, and if that turns out to have been closed by the server, on a new one.
 pub fn full(host: Host, plain: Option<&str>, method: &str, target: &[u8], headers: &[(&str, &[u8])], body: &[u8]) -> std::io::Result<(super::http::Response, Vec<u8>)> {
-    let mut c = Conn::open(host, plain)?;
+    if plain.is_none()
+        && let Some(c) = take_idle(host)
+        && let Ok(r) = exchange(c, host, method, target, headers, body)
+    {
+        return Ok(r);
+    }
+    exchange(Conn::open(host, plain)?, host, method, target, headers, body)
+}
+
+fn exchange(mut c: Conn, host: Host, method: &str, target: &[u8], headers: &[(&str, &[u8])], body: &[u8]) -> std::io::Result<(super::http::Response, Vec<u8>)> {
     let mut req = Vec::new();
     super::http::write_request(&mut req, method, host.name(), target, headers, body);
     c.send(&req)?;
@@ -306,6 +344,10 @@ pub fn full(host: Host, plain: Option<&str>, method: &str, target: &[u8], header
             }
         }
         if resp.done() {
+            if !resp.close && !closed {
+                c.last_used = Instant::now();
+                put_idle(c);
+            }
             return Ok((resp, out));
         }
         if let Some(e) = err {
@@ -313,6 +355,10 @@ pub fn full(host: Host, plain: Option<&str>, method: &str, target: &[u8], header
         }
         if n == 0 {
             if closed {
+                // a kept connection the server had already closed: nothing came at all
+                if out.is_empty() && !resp.head_done && c.uses > 1 {
+                    return Err(std::io::Error::new(ErrorKind::ConnectionReset, "kept connection was closed"));
+                }
                 return match resp.eof() {
                     Ok(()) => Ok((resp, out)),
                     Err(_) => Err(std::io::Error::new(ErrorKind::UnexpectedEof, "connection closed mid-response")),
