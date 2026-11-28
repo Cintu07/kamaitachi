@@ -57,8 +57,9 @@ pub fn factory() -> IDWriteFactory2 {
 /// Unicode, the TeX fonts, under the SIL Open Font License (assets/fonts/OFL.txt).
 pub const TYPEWRITER: &str = "CMU Typewriter Text";
 pub const SERIF: &str = "CMU Serif";
-/// the interface: a clear sans with a little editorial warmth
-pub const SANS: &str = "Instrument Sans";
+/// the interface: Inter, drawn after the system faces of phones and Macs, and made
+/// for small sizes on screens
+pub const SANS: &str = "Inter";
 /// capitals after carved inscriptions, for the name and headings
 pub const CARVED: &str = "Cinzel";
 
@@ -67,9 +68,9 @@ pub const CARVED: &str = "Cinzel";
 const OWN_FONTS: [&[u8]; 7] = [
     include_bytes!("../../assets/fonts/cmuntt.woff2"),
     include_bytes!("../../assets/fonts/cmunrm.woff2"),
-    include_bytes!("../../assets/fonts/instrument-400.woff2"),
-    include_bytes!("../../assets/fonts/instrument-500.woff2"),
-    include_bytes!("../../assets/fonts/instrument-600.woff2"),
+    include_bytes!("../../assets/fonts/inter-400.woff2"),
+    include_bytes!("../../assets/fonts/inter-500.woff2"),
+    include_bytes!("../../assets/fonts/inter-600.woff2"),
     include_bytes!("../../assets/fonts/cinzel-400.woff2"),
     include_bytes!("../../assets/fonts/cinzel-700.woff2"),
 ];
