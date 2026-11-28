@@ -9,6 +9,7 @@ mod fields;
 mod find;
 mod menu;
 mod motion;
+mod colour;
 mod pick;
 mod places;
 mod prefs;
@@ -56,8 +57,6 @@ const START: &str = "hayate:start";
 const SETTINGS: &str = "https://kamaitachi.local/settings";
 
 const MONO: &str = "Cascadia Mono, Consolas, monospace";
-/// the browser's name: kamaitachi, the sickle-weasel that rides whirlwinds
-const BRAND: &str = "kamaitachi";
 const UI_FONT: &str = "Inter, Segoe UI Variable Text, Segoe UI, sans-serif";
 const ICON_FONT: &str = "Segoe Fluent Icons, Segoe MDL2 Assets";
 
@@ -350,7 +349,7 @@ pub fn run(urls: Vec<String>) -> Result<(), String> {
             });
         // the gpu path presents with a flip swap chain and needs no gdi surface
         let ex = if paint::wanted() == "cpu" { WINDOW_EX_STYLE(0) } else { WS_EX_NOREDIRECTIONBITMAP };
-        let hwnd = CreateWindowExW(ex, class, w!("kamaitachi"), WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT, 100, 100, None, None, Some(inst.into()), None).map_err(|e| e.to_string())?;
+        let hwnd = CreateWindowExW(ex, class, w!("New tab"), WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT, 100, 100, None, None, Some(inst.into()), None).map_err(|e| e.to_string())?;
         let memlog = std::env::var("HAYATE_MEMLOG").is_ok();
         if memlog {
             eprintln!("mem: window {:.1}", private_mb());
@@ -1571,7 +1570,7 @@ impl App {
 
     fn update_title(&self) {
         if let Some(t) = self.tabs.get(self.cur) {
-            let s: Vec<u16> = format!("{} - {BRAND}", t.title).encode_utf16().chain(Some(0)).collect();
+            let s: Vec<u16> = t.title.encode_utf16().chain(Some(0)).collect();
             unsafe {
                 let _ = SetWindowTextW(self.hwnd, PCWSTR(s.as_ptr()));
             }
@@ -2191,7 +2190,7 @@ impl App {
             t.scroll = if d.abs() < 1.0 || !smooth { t.target } else { t.scroll + d * 0.45 };
         }
         let card = if self.tab().url == START || self.tab().full_mode { sk().field } else { self.tab().dl.as_ref().map_or(sk().field, |d| d.bg) };
-        let card = if !sk().light && prefs::get().darken && luma(card) > 150 && self.tab().url != START && !self.tab().full_mode { night(card) } else { card };
+        let card = if !sk().light && prefs::get().darken && colour::luminance(card) > 0.35 && self.tab().url != START && !self.tab().full_mode { night(card) } else { card };
         self.hits.clear();
         let t0 = Instant::now();
         self.gpu.begin(sk().frame);
@@ -2292,7 +2291,7 @@ impl App {
         };
         // in Night, a page that is only light is turned dark: each colour's lightness is
         // turned over and its hue kept, so white is near black and blue links stay blue
-        let dark = !sk().light && prefs::get().darken && luma(dl.bg) > 150;
+        let dark = !sk().light && prefs::get().darken && colour::luminance(dl.bg) > 0.35;
         let tone = |c: Rgba| if dark { night(c) } else { c };
         let gpu = &mut self.gpu;
         let mut skip_text = false;
@@ -2419,11 +2418,6 @@ impl App {
         self.wall = Some((cw, ch, img.clone()));
         Some(img)
     }
-}
-
-/// How light a colour looks, 0 to 255.
-fn luma(c: Rgba) -> u32 {
-    (c[0] as u32 * 299 + c[1] as u32 * 587 + c[2] as u32 * 114) / 1000
 }
 
 /// A colour with its lightness turned over and its hue kept: each channel moves by the

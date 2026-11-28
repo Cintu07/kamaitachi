@@ -7,7 +7,7 @@
 //! a form with `data-auto` goes as soon as something is picked in its list.
 
 use super::prefs::{self, SEARCH};
-use super::skin::{Skin, ACCENTS};
+use super::skin::{self, Skin};
 use super::*;
 
 enum Kind {
@@ -68,7 +68,7 @@ fn sections() -> Vec<(&'static str, &'static str, Vec<Row>)> {
                 row("sleep_after", "Sleep tabs you aren't using", "A resting tab lets its page go and comes back where you left it", list(&[("0", "Never"), ("10", "After 10 minutes"), ("30", "After 30 minutes"), ("60", "After an hour")])),
                 row("close_after", "Close tabs you leave alone", "Ctrl+Shift+T brings one back", list(&[("0", "Never"), ("12", "After 12 hours"), ("24", "After a day"), ("168", "After a week")])),
                 row("close_goes_back", "Closing a tab goes back to the one before", "Off, you land on the tab beside it", Kind::Switch),
-                row("keep_window", "Keep the window when its last tab closes", "Off, closing the last tab closes kamaitachi", Kind::Switch),
+                row("keep_window", "Keep the window when its last tab closes", "Off, closing the last tab closes the window", Kind::Switch),
                 row("beside", "Links open beside their page", "A link opened in a new tab goes right after the tab it came from", Kind::Switch),
             ],
         ),
@@ -156,7 +156,7 @@ fn control(r: &Row, p: &prefs::Prefs, s: &Skin, section: &str) -> String {
             let opts: String = choices.iter().map(|(v, l)| format!("<option value=\"{v}\"{}>{}</option>", if *v == now { " selected" } else { "" }, esc(l))).collect();
             format!("<form action=\"https://kamaitachi.local/set\" data-auto><input type=hidden name=s value={section}><select name={}>{opts}</select></form>", r.key)
         }
-        Kind::Accents => ACCENTS
+        Kind::Accents => skin::accents()
             .iter()
             .enumerate()
             .map(|(i, a)| {
@@ -233,7 +233,7 @@ pub(super) fn html(find: &str, section: &str) -> String {
     if body.is_empty() {
         body = format!("<p class=none>No setting has \u{201c}{}\u{201d} in it.</p>", esc(find.trim()));
     }
-    let on_accent = if s.light { "#ffffff" } else { "#10141a" };
+    let on_accent = hex(super::colour::on_accent(s.light));
     format!(
         r#"<!doctype html><html><head><title>Settings</title><style>
 html {{ background: {page}; color: {text}; font-family: "Inter", "Segoe UI", sans-serif; font-size: 14px; }}

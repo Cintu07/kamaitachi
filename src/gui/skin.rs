@@ -1,6 +1,7 @@
-//! The colours the window is drawn in: white marble with Aegean blue by day, the same
-//! sea at night in the dark. Which one, and the accent colour, come from the settings.
+//! The colours the window is drawn in: marble by day, slate at night, and one accent.
+//! The colours themselves, and why they are what they are, are in colour.rs.
 
+use super::colour;
 use super::prefs::{self, Theme};
 use crate::web::Rgba;
 use std::cell::Cell;
@@ -29,48 +30,36 @@ pub struct Skin {
     pub gold: Rgba,
 }
 
-/// (name, by day, at night)
-pub const ACCENTS: [(&str, Rgba, Rgba); 6] = [
-    ("Aegean", [0x1f, 0x6f, 0xc0, 255], [0x6f, 0xaa, 0xea, 255]),
-    ("Olive", [0x5f, 0x75, 0x2e, 255], [0xa8, 0xbf, 0x6a, 255]),
-    ("Terracotta", [0xb5, 0x55, 0x2f, 255], [0xe8, 0x8e, 0x66, 255]),
-    ("Porphyry", [0x7a, 0x3e, 0x8f, 255], [0xc0, 0x8c, 0xd6, 255]),
-    ("Laurel", [0x2f, 0x7a, 0x5c, 255], [0x6c, 0xc4, 0x9c, 255]),
-    ("Gold", [0x9a, 0x74, 0x22, 255], [0xd9, 0xb2, 0x5c, 255]),
-];
-
-const MARBLE: Skin = Skin {
+/// The look before the settings are read: marble with Aegean.
+const START: Skin = Skin {
     light: true,
     frame: [0xf3, 0xf1, 0xec, 255],
     field: [0xff, 0xff, 0xff, 255],
     wash: [0xe6, 0xe2, 0xda, 255],
     hover: [0xec, 0xe9, 0xe3, 255],
     text: [0x1b, 0x22, 0x2c, 255],
-    muted: [0x76, 0x7b, 0x84, 255],
+    muted: [0x6b, 0x70, 0x78, 255],
     faint: [0xb9, 0xb6, 0xae, 255],
     hairline: [0xdf, 0xdb, 0xd3, 255],
-    accent: ACCENTS[0].1,
-    ink: ACCENTS[0].1,
+    accent: [0x1f, 0x6f, 0xc0, 255],
+    ink: [0x1f, 0x6f, 0xc0, 255],
     gold: [0xb3, 0x8b, 0x3e, 255],
 };
 
-const NIGHT: Skin = Skin {
-    light: false,
-    frame: [0x13, 0x17, 0x1d, 255],
-    field: [0x1f, 0x25, 0x2e, 255],
-    wash: [0x2a, 0x31, 0x3b, 255],
-    hover: [0x20, 0x26, 0x2f, 255],
-    text: [0xe9, 0xe6, 0xdf, 255],
-    muted: [0x93, 0x98, 0xa1, 255],
-    faint: [0x55, 0x5b, 0x65, 255],
-    hairline: [0x2a, 0x30, 0x39, 255],
-    accent: ACCENTS[0].2,
-    ink: ACCENTS[0].2,
-    gold: [0xcf, 0xa9, 0x58, 255],
-};
+/// A look built from one of the colour ladders and an accent.
+fn build(light: bool, accent: usize) -> Skin {
+    let l = if light { colour::marble() } else { colour::night() };
+    let a = colour::accent(accent, light);
+    Skin { light, frame: l.frame, field: l.field, wash: l.wash, hover: l.hover, text: l.text, muted: l.muted, faint: l.faint, hairline: l.hairline, accent: a, ink: a, gold: l.gold }
+}
+
+/// (name, by day, at night) for each accent, for the settings page.
+pub fn accents() -> Vec<(&'static str, Rgba, Rgba)> {
+    colour::ACCENT_HUES.iter().enumerate().map(|(i, a)| (a.0, colour::accent(i, true), colour::accent(i, false))).collect()
+}
 
 thread_local! {
-    static CURRENT: Cell<Skin> = const { Cell::new(MARBLE) };
+    static CURRENT: Cell<Skin> = const { Cell::new(START) };
     /// whether this window can be glass: only the cpu painter keeps per-pixel alpha
     static GLASS: Cell<bool> = const { Cell::new(false) };
 }
@@ -98,8 +87,8 @@ fn windows_light() -> bool {
 
 /// (frame, card, lines) of a look, for the small pictures on the settings page.
 pub fn preview(light: bool) -> (Rgba, Rgba, Rgba) {
-    let s = if light { MARBLE } else { NIGHT };
-    (s.frame, if light { [0xff, 0xff, 0xff, 255] } else { [0x24, 0x2a, 0x33, 255] }, s.faint)
+    let s = build(light, 0);
+    (s.frame, s.field, s.faint)
 }
 
 /// Works out the colours from the settings. Call at start and after a setting changes.
@@ -110,10 +99,7 @@ pub fn refresh() {
         Theme::Dark => false,
         Theme::System => windows_light(),
     };
-    let mut s = if light { MARBLE } else { NIGHT };
-    let (_, day, night) = ACCENTS[p.accent.min(ACCENTS.len() - 1)];
-    s.accent = if light { day } else { night };
-    s.ink = s.accent;
+    let mut s = build(light, p.accent);
     if p.contrast {
         s.muted = s.text;
     }

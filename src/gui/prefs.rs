@@ -22,7 +22,7 @@ pub enum Side {
 #[derive(Clone, Copy, Debug)]
 pub struct Prefs {
     pub theme: Theme,
-    /// index into skin::ACCENTS
+    /// index into colour::ACCENT_HUES
     pub accent: usize,
     pub side: Side,
     /// css px
@@ -237,7 +237,7 @@ impl Prefs {
                     _ => return false,
                 }
             }
-            "accent" => match num.filter(|n| (*n as usize) < super::skin::ACCENTS.len()) {
+            "accent" => match num.filter(|n| (*n as usize) < super::colour::ACCENT_HUES.len()) {
                 Some(n) => self.accent = n as usize,
                 None => return false,
             },

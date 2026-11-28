@@ -173,6 +173,10 @@ pub(super) fn letter_of(t: &Tab) -> String {
     if t.url == START || t.url.is_empty() {
         return "·".into();
     }
+    // the browser's own pages go by their title: S for Settings, H for History
+    if t.url.starts_with("https://kamaitachi.local/") {
+        return t.title.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "·".into());
+    }
     let host = host_of(&t.url);
     let name = host.trim_start_matches("www.");
     name.chars().find(|c| c.is_alphanumeric()).map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "·".into())
@@ -229,7 +233,10 @@ impl App {
             let ours = url.starts_with("https://kamaitachi.local/");
             let on_page = url != START && !url.is_empty();
             let room = r.w - 20.0 - if on_page && !ours { cw + 30.0 } else { 0.0 };
-            if on_page {
+            if ours {
+                let title = self.tab().title.clone();
+                self.label(&title, r.x + 11.0, r.y + 8.0, 13.0, 500, s.text, room, UI_FONT);
+            } else if on_page {
                 let rest = url.trim_start_matches("https://");
                 let (host, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
                 let host = host.trim_start_matches("www.").to_string();
@@ -469,21 +476,7 @@ impl App {
             let r = if prefs::get().card { RADIUS * k } else { 0.0 };
             self.gpu.draw_image(&img, b.x * k + (b.w * k - dw) / 2.0, b.y * k + (b.h * k - dh) / 2.0, dw, dh, 1.0, r, [b.x * k, b.y * k, (b.x + b.w) * k, (b.y + b.h) * k]);
         }
-        // the name, cut in capitals the way names are cut in stone
-        let name = "KAMAITACHI";
-        let face = text::CARVED;
-        let size = (b.h * 0.045).clamp(24.0, 36.0);
-        let spacing = size * 0.22;
-        let widths: Vec<f32> = name.chars().map(|c| self.ui_text(&c.to_string(), size, 400, face, s.text).1).collect();
-        let total: f32 = widths.iter().sum::<f32>() + spacing * (widths.len() - 1) as f32;
         let mid = b.x + b.w / 2.0;
-        let y = self.start_top();
-        let mut x = mid - total / 2.0;
-        for (c, w) in name.chars().zip(&widths) {
-            self.label(&c.to_string(), x, y, size, 400, s.text, w + 2.0, face);
-            x += w + spacing;
-        }
-        self.meander(mid - 66.0, y + size * 1.55, 132.0, s.gold);
         // the box you type in; the field comes up in exactly its place
         let r = self.field_box(0);
         if !self.addr_focused {
@@ -496,9 +489,10 @@ impl App {
             self.label("Search or type an address", r.x + 46.0, r.y + 15.0, 17.0, 400, s.faint, r.w - 62.0, UI_FONT);
             self.hits.push((r, Hit::Addr));
         }
+        self.meander(mid - 66.0, r.y + r.h + 30.0, 132.0, s.gold);
         let line = format!("{:.1} MB in use", private_mb() + self.full_mb);
         let lw = self.ui_text(&line, 12.5, 400, UI_FONT, s.muted).1;
-        self.label(&line, mid - lw / 2.0, r.y + r.h + 22.0, 12.5, 400, s.faint, lw + 4.0, UI_FONT);
+        self.label(&line, mid - lw / 2.0, r.y + r.h + 46.0, 12.5, 400, s.faint, lw + 4.0, UI_FONT);
     }
 
     // ---- the address field ----
@@ -531,10 +525,10 @@ impl App {
         Rect::new(b.x + (b.w - w) / 2.0, y, w, 54.0 + if rows > 0 { rows as f32 * ROW + 12.0 } else { 0.0 })
     }
 
-    /// Where the name sits on a new tab.
+    /// Where the search box's area starts on a new tab: a little above the middle.
     fn start_top(&self) -> f32 {
         let b = self.page_box();
-        b.y + (b.h * 0.3).max(60.0)
+        b.y + (b.h * 0.34 - 70.0).max(20.0)
     }
 
     pub(super) fn draw_address(&mut self) {
