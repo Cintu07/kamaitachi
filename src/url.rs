@@ -167,6 +167,37 @@ pub fn search(q: &str) -> Url {
     Url::parse(&template.replace("%s", &encode(q))).unwrap_or_else(|| Url { host: "lite.duckduckgo.com".into(), path: format!("/lite/?q={}", encode(q)) })
 }
 
+/// Words that send a search straight to a site: "w kamaitachi" goes to Wikipedia.
+/// A ! in front works too, as in "!w kamaitachi".
+pub const SHORTCUTS: &[(&str, &str, &str)] = &[
+    ("w", "Wikipedia", "https://en.wikipedia.org/w/index.php?search=%s"),
+    ("yt", "YouTube", "https://www.youtube.com/results?search_query=%s"),
+    ("gh", "GitHub", "https://github.com/search?q=%s"),
+    ("r", "Reddit", "https://www.reddit.com/search/?q=%s"),
+    ("a", "Amazon", "https://www.amazon.com/s?k=%s"),
+    ("m", "Maps", "https://www.google.com/maps/search/%s"),
+    ("g", "Google", "https://www.google.com/search?q=%s"),
+    ("i", "Images", "https://duckduckgo.com/?ia=images&iax=images&q=%s"),
+    ("hn", "Hacker News", "https://hn.algolia.com/?q=%s"),
+    ("so", "Stack Overflow", "https://stackoverflow.com/search?q=%s"),
+    ("mdn", "MDN", "https://developer.mozilla.org/en-US/search?q=%s"),
+    ("rs", "docs.rs", "https://docs.rs/releases/search?query=%s"),
+    ("cr", "crates.io", "https://crates.io/search?q=%s"),
+    ("x", "X", "https://x.com/search?q=%s"),
+];
+
+/// The site a shortcut at the start of typed text goes to, and the address.
+pub fn shortcut(s: &str) -> Option<(&'static str, Url)> {
+    let (word, rest) = s.trim().split_once(' ')?;
+    let word = word.strip_prefix('!').unwrap_or(word).to_ascii_lowercase();
+    let rest = rest.trim();
+    if rest.is_empty() {
+        return None;
+    }
+    let (_, name, template) = SHORTCUTS.iter().find(|(k, _, _)| *k == word)?;
+    Some((name, Url::parse(&template.replace("%s", &encode(rest)))?))
+}
+
 /// Whether typed text is an address rather than words to search for.
 pub fn looks_like_address(s: &str) -> bool {
     let s = s.trim();
@@ -195,6 +226,9 @@ impl Url {
 /// What the address bar does with input: an address, or a web search.
 pub fn from_input(s: &str) -> Url {
     let s = s.trim();
+    if let Some((_, u)) = shortcut(s) {
+        return u;
+    }
     if !s.contains(' ') && s.contains('.') {
         if let Some(u) = Url::parse(s) {
             return u;
@@ -206,6 +240,16 @@ pub fn from_input(s: &str) -> Url {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shortcuts_go_straight_to_a_site() {
+        assert_eq!(from_input("w sickle weasel").full(), "https://en.wikipedia.org/w/index.php?search=sickle%20weasel");
+        assert_eq!(from_input("!gh rust lang").host, "github.com");
+        assert_eq!(shortcut("w"), None);
+        assert!(shortcut("zz something").is_none());
+        // a sentence that starts with a short word is still a search
+        assert_eq!(from_input("a").host, search("a").host);
+    }
 
     #[test]
     fn click_trackers_come_out() {
