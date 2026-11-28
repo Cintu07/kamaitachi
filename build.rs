@@ -67,11 +67,12 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         // layout recurses once per nested box; deep pages need more than the default 1 mb
         println!("cargo:rustc-link-arg-bins=/STACK:16777216");
-        // the window browser's dlls load on first use, so the terminal client never maps them
+        // the window's dlls load on first use, so one it never calls, like direct3d when it
+        // draws on the cpu, is never mapped
         for dll in ["d3d11.dll", "dxgi.dll", "dwrite.dll", "d3dcompiler_47.dll", "dwmapi.dll", "gdi32.dll", "user32.dll", "ole32.dll", "oleaut32.dll", "combase.dll", "shell32.dll"] {
-            println!("cargo:rustc-link-arg-bins=/DELAYLOAD:{dll}");
+            println!("cargo:rustc-link-arg-bin=kamaitachi=/DELAYLOAD:{dll}");
         }
-        println!("cargo:rustc-link-arg-bins=delayimp.lib");
+        println!("cargo:rustc-link-arg-bin=kamaitachi=delayimp.lib");
         embed_webview2_loader();
         embed_icon();
     }

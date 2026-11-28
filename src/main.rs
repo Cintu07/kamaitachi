@@ -56,7 +56,6 @@ fn main() {
             println!("{}", hayate::web::block::report());
             Ok(())
         }
-        Some("web") => hayate::gui::run(args[2..].to_vec()),
         Some("shot") => hayate::bench::shots(&args[2..]),
         Some("replay-server") => hayate::bench::serve_stdout(),
         Some("probe") => hayate::bench::probe(&args[2..]),
