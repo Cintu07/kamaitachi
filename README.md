@@ -75,6 +75,12 @@ A page that is on a malware or phishing list does not load at all. You get a war
 | `Ctrl+T`, `Ctrl+W` | new tab, close tab |
 | `Ctrl+Tab`, `Ctrl+1` to `9` | next tab, a tab by number. Hold `Ctrl` to see the numbers |
 | `Ctrl+S` | put the column of tabs away, or bring it back |
+| `Ctrl+F` | find on the page |
+| `Ctrl+D`, `Ctrl+Shift+O` | bookmark the page, all bookmarks |
+| `Ctrl+H`, `Ctrl+J` | history, downloads |
+| `Shift`+click a link | peek at it in a card over the page |
+| right-click a tab | pin, duplicate, mute, sleep, close the others |
+| `Ctrl+Shift+C`, `Ctrl+Shift+V` | copy the address, paste one and go |
 | `Ctrl+,` | settings |
 | `Ctrl+Shift+T` | open the last closed tab again |
 | `Alt+Left`, `Alt+Right` | back, forward |
@@ -85,7 +91,7 @@ A page that is on a malware or phishing list does not load at all. You get a war
 | `Ctrl` `+` / `-` / `0` | zoom |
 | `F5` | reload |
 
-Tabs from last time come back when kamaitachi starts, and each one loads only when you open it.
+Tabs from last time come back when kamaitachi starts, and each one loads only when you open it. A word at the start of the address field sends a search straight to a site: `w` for Wikipedia, `yt` for YouTube, `gh` for GitHub, `r` for Reddit and ten more.
 
 Drag an image onto the window and it becomes the new tab's wallpaper.
 
