@@ -79,8 +79,9 @@ impl App {
         let b = Rect::new(x, g, (right - x).max(1.0), (h - 2.0 * g).max(1.0));
         if self.tabs.get(self.cur).is_some_and(|t| t.peek) {
             // a peek is a card inside the page's card, with room above it for its buttons
-            let (mx, top) = ((b.w * 0.06).max(24.0), 52.0);
-            return Rect::new(b.x + mx, b.y + top, (b.w - 2.0 * mx).max(1.0), (b.h - top - 24.0).max(1.0));
+            let rise = (1.0 - motion::part(self.motion.peek, motion::PANEL_MS * 1.4)) * 24.0;
+            let (mx, top) = ((b.w * 0.06).max(24.0), 52.0 + rise);
+            return Rect::new(b.x + mx, b.y + top, (b.w - 2.0 * mx).max(1.0), (b.h - 52.0 - 24.0).max(1.0));
         }
         b
     }
@@ -163,14 +164,21 @@ impl App {
 
     /// The letter a tab shows in its square: the first of its site's name.
     fn letter(t: &Tab) -> String {
-        if t.url == START || t.url.is_empty() {
-            return "·".into();
-        }
-        let host = host_of(&t.url);
-        let name = host.trim_start_matches("www.");
-        name.chars().find(|c| c.is_alphanumeric()).map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "·".into())
+        letter_of(t)
     }
+}
 
+/// The letter a tab shows in its square: the first of its site's name.
+pub(super) fn letter_of(t: &Tab) -> String {
+    if t.url == START || t.url.is_empty() {
+        return "·".into();
+    }
+    let host = host_of(&t.url);
+    let name = host.trim_start_matches("www.");
+    name.chars().find(|c| c.is_alphanumeric()).map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "·".into())
+}
+
+impl App {
     pub(super) fn draw_column(&mut self) {
         if !self.column_out() {
             return;
@@ -276,21 +284,48 @@ impl App {
                 self.label(&mark, r.x + (size - mw) / 2.0, r.y + 9.5, 14.0, 600, c, size, UI_FONT);
                 self.hits.push((r, Hit::Tab(i)));
             }
-            top += ((pins.len() + per - 1) / per) as f32 * (size + gap) + 6.0;
+            top += pins.len().div_ceil(per) as f32 * (size + gap) + 6.0;
         }
         let n = rows.len();
         let fits = ((bottom - top) / rh).floor().max(1.0) as usize;
         self.col_scroll = self.col_scroll.min(n.saturating_sub(fits.saturating_sub(1)));
-        for (row, &i) in rows.iter().enumerate().skip(self.col_scroll) {
-            let ry = top + (row - self.col_scroll) as f32 * rh;
-            if ry + rh > bottom {
+        // rows stack by their height, which grows from nothing for a tab just opened;
+        // a tab just closed leaves a ghost that folds away where it was
+        let mut ry = top;
+        let ghosts: Vec<(String, String, u64, f32)> = self.motion.ghosts.iter().map(|g| (g.title.clone(), g.letter.clone(), g.after, 1.0 - motion::part(Some(g.at), motion::CLOSE_MS))).collect();
+        let draw_ghosts = |app: &mut App, after: u64, ry: &mut f32| {
+            for (title, letter, _, left) in ghosts.iter().filter(|g| g.2 == after) {
+                let h = rh * left;
+                if *ry + h > bottom {
+                    continue;
+                }
+                let r = Rect::new(x0 + 8.0, *ry, w - 16.0, (h - 2.0).max(0.0));
+                if *left > 0.35 {
+                    let a = (*left - 0.35) / 0.65;
+                    app.label(letter, r.x + 13.0, r.y + (r.h - 14.0) / 2.0, 10.5, 600, motion::fade(s.muted, a), 18.0, UI_FONT);
+                    app.label(title, r.x + 34.0, r.y + (r.h - size * 1.33) / 2.0, size, 400, motion::fade(s.muted, a), r.w - 40.0, UI_FONT);
+                }
+                *ry += h;
+            }
+        };
+        if self.col_scroll == 0 {
+            draw_ghosts(self, 0, &mut ry);
+        }
+        for &i in rows.iter().skip(self.col_scroll) {
+            let grown = self.motion.grown(self.tabs[i].id);
+            let row_h = rh * grown;
+            if ry + row_h > bottom {
                 break;
             }
-            let r = Rect::new(x0 + 8.0, ry, w - 16.0, rh - 2.0);
+            let r = Rect::new(x0 + 8.0, ry, w - 16.0, (row_h - 2.0).max(0.0));
+            let id = self.tabs[i].id;
+            ry += row_h;
+            // what fades in with the row as it grows
+            let fa = ((grown - 0.4) / 0.6).clamp(0.0, 1.0);
             let cur = i == self.cur;
             let over = hover == Hit::Tab(i) || hover == Hit::Close(i) || hover == Hit::Mute(i);
             if cur {
-                self.rect(r, s.wash, 8.0);
+                self.rect(r, motion::fade(s.wash, grown), 8.0);
             } else if over {
                 self.rect(r, s.hover, 8.0);
             }
@@ -301,27 +336,29 @@ impl App {
                 let a = if s.light { 14 } else { 18 };
                 self.rect(Rect::new(r.x, r.y, r.w * part, r.h), [s.text[0], s.text[1], s.text[2], a], 8.0);
             }
-            let t = &self.tabs[i];
-            let (asleep, full, muted) = (t.asleep || (t.page.is_none() && t.dl.is_none() && !t.full_mode && t.url != START), t.full.is_some(), t.muted);
-            let title = t.title.clone();
-            let letter = Self::letter(t);
-            let sq = Rect::new(r.x + 8.0, r.y + (r.h - 18.0) / 2.0, 18.0, 18.0);
-            self.rect(sq, if cur { s.field } else { s.hover }, 5.0);
-            self.gpu.ring(sq.x * k, sq.y * k, sq.w * k, sq.h * k, 1.0, s.hairline, 5.0 * k, gpu::NO_CLIP);
-            let (mark, mark_c) = if ctrl && i < 9 { ((i + 1).to_string(), s.accent) } else { (letter, if full { s.accent } else { s.muted }) };
-            let mw = self.ui_text(&mark, 10.5, 600, UI_FONT, mark_c).1;
-            self.label(&mark, sq.x + (18.0 - mw) / 2.0, sq.y + 2.5, 10.5, 600, mark_c, 18.0, UI_FONT);
-            let dim = asleep && p.dim_sleeping && !cur;
-            let color = if cur || p.contrast { s.text } else if dim { s.faint } else { s.muted };
-            let end = if cur || over { 26.0 } else { 6.0 } + if muted { 20.0 } else { 0.0 };
-            self.label(&title, r.x + 34.0, r.y + (r.h - size * 1.33) / 2.0, size, if cur { 500 } else { 400 }, color, r.w - 34.0 - end, UI_FONT);
-            if muted {
-                let m = Rect::new(r.x + r.w - end + 2.0, r.y + (r.h - 18.0) / 2.0, 18.0, 18.0);
-                self.icon('\u{E74F}', m.x + 9.0, m.y + 9.0, 11.0, if hover == Hit::Mute(i) { s.text } else { s.muted });
-                self.hits.push((m, Hit::Mute(i)));
+            if fa > 0.0 {
+                let t = &self.tabs[i];
+                let (asleep, full, muted) = (t.asleep || (t.page.is_none() && t.dl.is_none() && !t.full_mode && t.url != START), t.full.is_some(), t.muted);
+                let title = t.title.clone();
+                let letter = Self::letter(t);
+                let sq = Rect::new(r.x + 8.0, r.y + (r.h - 18.0) / 2.0, 18.0, 18.0);
+                self.rect(sq, motion::fade(if cur { s.field } else { s.hover }, fa), 5.0);
+                self.gpu.ring(sq.x * k, sq.y * k, sq.w * k, sq.h * k, 1.0, motion::fade(s.hairline, fa), 5.0 * k, gpu::NO_CLIP);
+                let (mark, mark_c) = if ctrl && i < 9 { ((i + 1).to_string(), s.accent) } else { (letter, if full { s.accent } else { s.muted }) };
+                let mw = self.ui_text(&mark, 10.5, 600, UI_FONT, mark_c).1;
+                self.label(&mark, sq.x + (18.0 - mw) / 2.0, sq.y + 2.5, 10.5, 600, motion::fade(mark_c, fa), 18.0, UI_FONT);
+                let dim = asleep && p.dim_sleeping && !cur;
+                let color = if cur || p.contrast { s.text } else if dim { s.faint } else { s.muted };
+                let end = if cur || over { 26.0 } else { 6.0 } + if muted { 20.0 } else { 0.0 };
+                self.label(&title, r.x + 34.0, r.y + (r.h - size * 1.33) / 2.0, size, if cur { 500 } else { 400 }, motion::fade(color, fa), r.w - 34.0 - end, UI_FONT);
+                if muted {
+                    let m = Rect::new(r.x + r.w - end + 2.0, r.y + (r.h - 18.0) / 2.0, 18.0, 18.0);
+                    self.icon('\u{E74F}', m.x + 9.0, m.y + 9.0, 11.0, if hover == Hit::Mute(i) { s.text } else { s.muted });
+                    self.hits.push((m, Hit::Mute(i)));
+                }
             }
             self.hits.push((r, Hit::Tab(i)));
-            if cur || over {
+            if (cur || over) && fa >= 1.0 {
                 let c = Rect::new(r.x + r.w - 23.0, r.y + (r.h - 20.0) / 2.0, 20.0, 20.0);
                 if hover == Hit::Close(i) {
                     self.rect(c, s.wash, 5.0);
@@ -329,9 +366,9 @@ impl App {
                 self.icon('\u{E711}', c.x + 10.0, c.y + 10.0, 9.5, s.muted);
                 self.hits.push((c, Hit::Close(i)));
             }
+            draw_ghosts(self, id, &mut ry);
         }
-        let shown = (n - self.col_scroll).min(fits);
-        let ny = top + shown as f32 * rh;
+        let ny = ry;
         if ny + rh <= bottom + rh {
             let r = Rect::new(x0 + 8.0, ny.min(bottom), w - 16.0, rh - 2.0);
             if hover == Hit::NewTab {
@@ -432,30 +469,36 @@ impl App {
             let r = if prefs::get().card { RADIUS * k } else { 0.0 };
             self.gpu.draw_image(&img, b.x * k + (b.w * k - dw) / 2.0, b.y * k + (b.h * k - dh) / 2.0, dw, dh, 1.0, r, [b.x * k, b.y * k, (b.x + b.w) * k, (b.y + b.h) * k]);
         }
-        if self.addr_focused {
-            return;
-        }
         // the name, cut in capitals the way names are cut in stone
         let name = "KAMAITACHI";
         let face = text::CARVED;
-        let size = (b.h * 0.05).clamp(26.0, 40.0);
+        let size = (b.h * 0.045).clamp(24.0, 36.0);
         let spacing = size * 0.22;
         let widths: Vec<f32> = name.chars().map(|c| self.ui_text(&c.to_string(), size, 400, face, s.text).1).collect();
         let total: f32 = widths.iter().sum::<f32>() + spacing * (widths.len() - 1) as f32;
         let mid = b.x + b.w / 2.0;
-        let y = b.y + b.h * 0.38;
+        let y = self.start_top();
         let mut x = mid - total / 2.0;
         for (c, w) in name.chars().zip(&widths) {
             self.label(&c.to_string(), x, y, size, 400, s.text, w + 2.0, face);
             x += w + spacing;
         }
-        self.meander(mid - 66.0, y + size * 1.6, 132.0, s.gold);
+        self.meander(mid - 66.0, y + size * 1.55, 132.0, s.gold);
+        // the box you type in; the field comes up in exactly its place
+        let r = self.field_box(0);
+        if !self.addr_focused {
+            let k = self.scale;
+            let over = self.hover == Hit::Addr;
+            self.rect(Rect::new(r.x - 1.0, r.y + 2.0, r.w + 2.0, r.h), [0, 0, 0, if s.light { 12 } else { 40 }], 13.0);
+            self.rect(r, s.field, 12.0);
+            self.gpu.ring(r.x * k, r.y * k, r.w * k, r.h * k, 1.0, if over { s.faint } else { s.hairline }, 12.0 * k, gpu::NO_CLIP);
+            self.icon('\u{E721}', r.x + 24.0, r.y + 27.0, 14.0, s.muted);
+            self.label("Search or type an address", r.x + 46.0, r.y + 15.0, 17.0, 400, s.faint, r.w - 62.0, UI_FONT);
+            self.hits.push((r, Hit::Addr));
+        }
         let line = format!("{:.1} MB in use", private_mb() + self.full_mb);
-        let lw = self.ui_text(&line, 13.0, 400, UI_FONT, s.muted).1;
-        self.label(&line, mid - lw / 2.0, y + size * 1.6 + 20.0, 13.0, 400, s.muted, lw + 4.0, UI_FONT);
-        let hint = "Ctrl+L to go somewhere";
-        let hw = self.ui_text(hint, 12.0, 400, UI_FONT, s.faint).1;
-        self.label(hint, mid - hw / 2.0, b.y + b.h - 44.0, 12.0, 400, s.faint, hw + 4.0, UI_FONT);
+        let lw = self.ui_text(&line, 12.5, 400, UI_FONT, s.muted).1;
+        self.label(&line, mid - lw / 2.0, r.y + r.h + 22.0, 12.5, 400, s.faint, lw + 4.0, UI_FONT);
     }
 
     // ---- the address field ----
@@ -479,10 +522,19 @@ impl App {
         v
     }
 
+    /// Where the address field is: over a page high up, and on a new tab just under
+    /// the name, where its box always sits.
     fn field_box(&self, rows: usize) -> Rect {
         let b = self.page_box();
         let w = (b.w - 48.0).min(FIELD_W);
-        Rect::new(b.x + (b.w - w) / 2.0, b.y + (b.h * 0.16).max(40.0), w, 54.0 + if rows > 0 { rows as f32 * ROW + 12.0 } else { 0.0 })
+        let y = if self.tab().url == START { self.start_top() + 70.0 } else { b.y + (b.h * 0.16).max(40.0) };
+        Rect::new(b.x + (b.w - w) / 2.0, y, w, 54.0 + if rows > 0 { rows as f32 * ROW + 12.0 } else { 0.0 })
+    }
+
+    /// Where the name sits on a new tab.
+    fn start_top(&self) -> f32 {
+        let b = self.page_box();
+        b.y + (b.h * 0.3).max(60.0)
     }
 
     pub(super) fn draw_address(&mut self) {
@@ -491,13 +543,18 @@ impl App {
         }
         let s = sk();
         let b = self.page_box();
+        let t = motion::part(self.motion.panel, motion::PANEL_MS);
         // the page fades back while you choose where to go; a new tab has nothing to fade
         if self.tab().url != START {
             let f = s.frame;
-            self.rect(b, [f[0], f[1], f[2], 120], 0.0);
+            self.rect(b, [f[0], f[1], f[2], (120.0 * t) as u8], 0.0);
         }
         let list = self.suggestions();
-        let r = self.field_box(list.len());
+        let mut r = self.field_box(list.len());
+        // it rises the last few pixels into place
+        if self.tab().url != START {
+            r.y += (1.0 - t) * 10.0;
+        }
         let k = self.scale;
         self.rect(Rect::new(r.x - 2.0, r.y + 4.0, r.w + 4.0, r.h + 2.0), [0, 0, 0, if s.light { 22 } else { 60 }], 14.0);
         self.rect(r, s.field, 12.0);
@@ -579,9 +636,10 @@ impl App {
     pub(super) fn draw_notes(&mut self) {
         let (b, s) = (self.page_box(), sk());
         let k = self.scale;
-        if let Some((msg, _)) = self.toast.clone() {
+        if let Some((msg, at)) = self.toast.clone() {
             let mw = self.ui_text(&msg, 13.0, 400, UI_FONT, s.text).1;
-            let r = Rect::new(b.x + (b.w - mw - 32.0) / 2.0, b.y + b.h - 54.0, mw + 32.0, 34.0);
+            let up = motion::part(Some(at), motion::NOTE_MS);
+            let r = Rect::new(b.x + (b.w - mw - 32.0) / 2.0, b.y + b.h - 54.0 + (1.0 - up) * 14.0, mw + 32.0, 34.0);
             self.rect(Rect::new(r.x, r.y + 2.0, r.w, r.h), [0, 0, 0, 24], 10.0);
             self.rect(r, s.field, 10.0);
             self.gpu.ring(r.x * k, r.y * k, r.w * k, r.h * k, 1.0, s.hairline, 10.0 * k, gpu::NO_CLIP);

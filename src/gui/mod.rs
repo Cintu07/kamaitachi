@@ -8,6 +8,7 @@ mod drive;
 mod fields;
 mod find;
 mod menu;
+mod motion;
 mod pick;
 mod places;
 mod prefs;
@@ -57,7 +58,7 @@ const SETTINGS: &str = "https://kamaitachi.local/settings";
 const MONO: &str = "Cascadia Mono, Consolas, monospace";
 /// the browser's name: kamaitachi, the sickle-weasel that rides whirlwinds
 const BRAND: &str = "kamaitachi";
-const UI_FONT: &str = "Instrument Sans, Segoe UI Variable Text, Segoe UI, sans-serif";
+const UI_FONT: &str = "Inter, Segoe UI Variable Text, Segoe UI, sans-serif";
 const ICON_FONT: &str = "Segoe Fluent Icons, Segoe MDL2 Assets";
 
 const START_HTML: &str = include_str!("start.html");
@@ -239,6 +240,7 @@ struct App {
     peek_under: Option<u64>,
     /// the column is out over the page, brought by the mouse at the edge
     col_peek: bool,
+    motion: motion::Motion,
     /// the mouse is over a box to type in, or something to press
     over: Option<bool>,
     /// the first half of a character that arrives as two messages, an emoji say
@@ -392,6 +394,7 @@ pub fn run(urls: Vec<String>) -> Result<(), String> {
             tab_menu: None,
             peek_under: None,
             col_peek: false,
+            motion: motion::Motion::default(),
             over: None,
             half: 0,
             last_click: (Instant::now(), -100.0, -100.0),
@@ -918,7 +921,7 @@ impl App {
     }
 
     fn animating(&self) -> bool {
-        self.tabs.get(self.cur).is_some_and(|t| (t.target - t.scroll).abs() > 0.5)
+        self.tabs.get(self.cur).is_some_and(|t| (t.target - t.scroll).abs() > 0.5) || self.motion.busy(self.toast.as_ref().map(|t| t.1))
     }
 
     fn max_scroll(&self) -> f32 {
@@ -944,6 +947,7 @@ impl App {
         let id = self.next_id;
         self.next_id += 1;
         self.tabs.push(Tab::new(id));
+        self.motion.opened.push((id, Instant::now()));
         self.cur = self.tabs.len() - 1;
         self.load(self.cur, url.to_string(), false);
     }
@@ -970,8 +974,21 @@ impl App {
             }
         }
         self.remember_closed(i);
+        // it folds away where it was, after the tab before it
+        if !self.tabs[i].pinned && !self.tabs[i].peek {
+            let after = (0..i).rev().find(|&j| !self.tabs[j].pinned && !self.tabs[j].peek).map_or(0, |j| self.tabs[j].id);
+            let t = &self.tabs[i];
+            self.motion.ghosts.push(motion::Ghost { title: t.title.clone(), letter: shell::letter_of(t), after, at: Instant::now() });
+        }
         self.tabs.remove(i);
         if self.tabs.is_empty() {
+            if !prefs::get().keep_window && self.shot.is_none() {
+                // the last tab closed: so does the window, as in other browsers
+                unsafe {
+                    let _ = DestroyWindow(self.hwnd);
+                }
+                return;
+            }
             self.new_tab(START);
             self.focus_addr();
             return;
@@ -1725,7 +1742,11 @@ impl App {
         self.blur();
         self.edit = Edit::new(&shown);
         self.edit.select_all();
+        if !self.addr_focused {
+            self.motion.panel = Some(Instant::now());
+        }
         self.addr_focused = true;
+        self.addr_pick = 0;
     }
 
     /// A character from the keyboard.
@@ -2083,6 +2104,8 @@ impl App {
                 }
             }
             Hit::None if self.addr_focused => self.addr_focused = false,
+            // on a new tab, a click anywhere on the page brings the field back
+            Hit::None if self.tab().url == START && self.in_page(x, y) => self.focus_addr(),
             Hit::None => {
                 if self.click_field(x, y, m, double) {
                 } else if let Some(l) = self.hover_link.clone() {
@@ -2158,12 +2181,14 @@ impl App {
         if self.tabs.is_empty() || self.w == 0 {
             return;
         }
+        self.motion.tidy();
         // scrolling eases toward its target, one step per frame, unless it should jump
         {
             let smooth = prefs::get().smooth;
             let t = self.tab_mut();
             let d = t.target - t.scroll;
-            t.scroll = if d.abs() < 0.5 || !smooth { t.target } else { t.scroll + d * 0.28 };
+            // most of the way in the first frames, so the wheel feels direct
+            t.scroll = if d.abs() < 1.0 || !smooth { t.target } else { t.scroll + d * 0.45 };
         }
         let card = if self.tab().url == START || self.tab().full_mode { sk().field } else { self.tab().dl.as_ref().map_or(sk().field, |d| d.bg) };
         let card = if !sk().light && prefs::get().darken && luma(card) > 150 && self.tab().url != START && !self.tab().full_mode { night(card) } else { card };

@@ -85,6 +85,7 @@ impl App {
         let (mx, my) = (x / self.scale, y / self.scale);
         let r = Rect::new(mx.min(w - 214.0).max(4.0), if my + mh < h { my } else { (my - mh).max(4.0) }, 210.0, mh);
         self.tab_menu = Some(Menu { target, items, r, hover: None });
+        self.motion.menu = Some(Instant::now());
         self.render();
         true
     }
@@ -175,8 +176,11 @@ impl App {
     }
 
     pub(super) fn draw_tab_menu(&mut self) {
-        let Some(m) = self.tab_menu.take() else { return };
+        let Some(mut m) = self.tab_menu.take() else { return };
         let (s, k) = (sk(), self.scale);
+        let t = motion::part(self.motion.menu, motion::PANEL_MS);
+        let real = m.r;
+        m.r.y -= (1.0 - t) * 6.0;
         self.rect(Rect::new(m.r.x - 1.0, m.r.y + 3.0, m.r.w + 2.0, m.r.h), [0, 0, 0, if s.light { 26 } else { 70 }], 10.0);
         self.rect(m.r, s.field, 9.0);
         self.gpu.ring(m.r.x * k, m.r.y * k, m.r.w * k, m.r.h * k, 1.0, s.hairline, 9.0 * k, gpu::NO_CLIP);
@@ -185,8 +189,9 @@ impl App {
             if m.hover == Some(n) {
                 self.rect(Rect::new(m.r.x + 5.0, y, m.r.w - 10.0, ROW), s.wash, 6.0);
             }
-            self.label(label, m.r.x + 16.0, y + 6.5, 13.5, 400, s.text, m.r.w - 30.0, UI_FONT);
+            self.label(label, m.r.x + 16.0, y + 6.5, 13.5, 400, motion::fade(s.text, t), m.r.w - 30.0, UI_FONT);
         }
+        m.r = real;
         self.tab_menu = Some(m);
     }
 
@@ -230,6 +235,7 @@ impl App {
         t.peek = true;
         self.tabs.push(t);
         self.peek_under = Some(under);
+        self.motion.peek = Some(Instant::now());
         self.cur = self.tabs.len() - 1;
         let from = host_of(&self.tabs[self.index_of(under).unwrap_or(0)].url);
         self.load_from(self.cur, url.to_string(), false, from);
@@ -282,7 +288,8 @@ impl App {
         self.draw_card_edges();
         let b = self.page_box();
         let r = if prefs::get().card { 10.0 } else { 0.0 };
-        self.rect(b, [0, 0, 0, if sk().light { 110 } else { 150 }], r);
+        let t = motion::part(self.motion.peek, motion::PANEL_MS * 1.4);
+        self.rect(b, [0, 0, 0, ((if sk().light { 110.0 } else { 150.0 }) * t) as u8], r);
         self.cur = peek;
     }
 

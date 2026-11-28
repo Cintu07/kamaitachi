@@ -68,6 +68,7 @@ fn sections() -> Vec<(&'static str, &'static str, Vec<Row>)> {
                 row("sleep_after", "Sleep tabs you aren't using", "A resting tab lets its page go and comes back where you left it", list(&[("0", "Never"), ("10", "After 10 minutes"), ("30", "After 30 minutes"), ("60", "After an hour")])),
                 row("close_after", "Close tabs you leave alone", "Ctrl+Shift+T brings one back", list(&[("0", "Never"), ("12", "After 12 hours"), ("24", "After a day"), ("168", "After a week")])),
                 row("close_goes_back", "Closing a tab goes back to the one before", "Off, you land on the tab beside it", Kind::Switch),
+                row("keep_window", "Keep the window when its last tab closes", "Off, closing the last tab closes kamaitachi", Kind::Switch),
                 row("beside", "Links open beside their page", "A link opened in a new tab goes right after the tab it came from", Kind::Switch),
             ],
         ),
@@ -235,7 +236,7 @@ pub(super) fn html(find: &str, section: &str) -> String {
     let on_accent = if s.light { "#ffffff" } else { "#10141a" };
     format!(
         r#"<!doctype html><html><head><title>Settings</title><style>
-html {{ background: {page}; color: {text}; font-family: "Instrument Sans", "Segoe UI", sans-serif; font-size: 14px; }}
+html {{ background: {page}; color: {text}; font-family: "Inter", "Segoe UI", sans-serif; font-size: 14px; }}
 body {{ margin: 0; }}
 .wrap {{ display: flex; max-width: 900px; margin: 0 auto; padding: 48px 28px 90px; }}
 aside {{ flex: 0 0 196px; padding-right: 36px; }}

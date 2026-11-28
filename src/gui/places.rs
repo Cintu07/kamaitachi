@@ -186,7 +186,7 @@ fn page(title: &str, action: &str, find: &str, hint: &str, rows: &str, extra: &s
     let hex = |c: Rgba| format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2]);
     format!(
         r#"<!doctype html><html><head><title>{title}</title><style>
-html {{ background: {page}; color: {text}; font-family: "Instrument Sans", "Segoe UI", sans-serif; font-size: 14px; }}
+html {{ background: {page}; color: {text}; font-family: "Inter", "Segoe UI", sans-serif; font-size: 14px; }}
 body {{ margin: 0; }}
 main {{ max-width: 720px; margin: 0 auto; padding: 48px 28px 90px; }}
 h1 {{ font-family: "Cinzel", Georgia, serif; font-weight: 400; font-size: 22px; letter-spacing: 2px; margin: 0 0 18px; }}

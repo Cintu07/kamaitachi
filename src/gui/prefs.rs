@@ -36,6 +36,8 @@ pub struct Prefs {
     /// faint veins in the marble of the column
     pub veins: bool,
     pub contrast: bool,
+    /// the window stays open on a new tab when its last tab closes
+    pub keep_window: bool,
     /// the column stays out of the way until the mouse reaches its edge of the window
     pub autohide: bool,
     /// pages with no dark look of their own are darkened in Night
@@ -91,6 +93,7 @@ impl Default for Prefs {
             meander: true,
             veins: true,
             contrast: false,
+            keep_window: false,
             autohide: false,
             darken: true,
             glass: true,
@@ -204,6 +207,7 @@ impl Prefs {
             "meander" => self.meander,
             "veins" => self.veins,
             "contrast" => self.contrast,
+            "keep_window" => self.keep_window,
             "autohide" => self.autohide,
             "darken" => self.darken,
             "glass" => self.glass,
@@ -278,6 +282,7 @@ impl Prefs {
                     "meander" => &mut self.meander,
                     "veins" => &mut self.veins,
                     "contrast" => &mut self.contrast,
+                    "keep_window" => &mut self.keep_window,
                     "autohide" => &mut self.autohide,
                     "darken" => &mut self.darken,
                     "glass" => &mut self.glass,
