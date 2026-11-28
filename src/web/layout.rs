@@ -1232,8 +1232,16 @@ impl<'a> Layout<'a> {
                 if matches!(ty.as_str(), "checkbox" | "radio") {
                     Some((13.0, 13.0))
                 } else if matches!(ty.as_str(), "submit" | "button" | "reset") || tag == t::select {
-                    let label = self.control_label(n);
-                    let w = label.chars().count() as f32 * s.font_size * 0.55 + if tag == t::select { s.font_size * 1.5 } else { 0.0 };
+                    // measured in the control's own font; a guess from the letter count
+                    // cut labels short in wide fonts
+                    let mut label = self.control_label(n);
+                    if tag == t::select {
+                        label.push_str("  \u{25be}");
+                    }
+                    let text: Vec<u16> = label.encode_utf16().collect();
+                    let len = text.len() as u32;
+                    let p = Para { text, runs: vec![Run { start: 0, len, font: font_of(s), color: s.color, deco: 0, link: u32::MAX }], nowrap: true, ..Default::default() };
+                    let w = self.text.widths(&p).1 + 1.0;
                     Some((w, lh))
                 } else if tag == t::textarea {
                     Some((300.0, lh * 2.0))
