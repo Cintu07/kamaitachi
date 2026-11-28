@@ -180,8 +180,17 @@ pub struct Doc {
 
 /// The page and every stylesheet it links, ready to cascade.
 pub fn load(req: &Request) -> Result<Doc, String> {
-    let f = fetch_page(req)?;
-    let text = decode_text(&f.body);
+    let mut f = fetch_page(req)?;
+    let mut text = decode_text(&f.body);
+    // a page that only sends you on, the way static sites move an address
+    for _ in 0..5 {
+        let Some(to) = refresh(&text).and_then(|u| f.url.join(&u)) else { break };
+        if to == f.url {
+            break;
+        }
+        f = fetch_page(&Request { url: to, body: None, from: f.url.host.clone() })?;
+        text = decode_text(&f.body);
+    }
     let html = if f.kind == 2 || (f.kind == 3 && !text.trim_start().starts_with('<')) {
         // plain text shows as preformatted text
         format!("<pre style=\"white-space:pre-wrap\">{}</pre>", text.replace('&', "&amp;").replace('<', "&lt;"))
@@ -189,6 +198,43 @@ pub fn load(req: &Request) -> Result<Doc, String> {
         text
     };
     Ok(from_html(&html, f.url, f.kind))
+}
+
+/// Where a `<meta http-equiv="refresh">` sends the reader at once, if the page has
+/// one. Read from the markup itself, since it is usually inside a <noscript>, which this
+/// engine keeps as text. A refresh after more than a few seconds is a page that wants
+/// to be read first, so it is left alone.
+fn refresh(html: &str) -> Option<String> {
+    let head = &html[..html.len().min(16 * 1024)];
+    let low = head.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(p) = low[from..].find("<meta") {
+        let start = from + p;
+        let end = start + low[start..].find('>')?;
+        from = end;
+        let tag = &low[start..end];
+        if !tag.contains("http-equiv") || !tag.contains("refresh") {
+            continue;
+        }
+        // content="0; url=..." in either quote, the url part as it was written
+        let c = tag.find("content=")? + 8;
+        let q = tag[c..].chars().next()?;
+        let (body, raw) = if q == '"' || q == '\'' {
+            let len = tag[c + 1..].find(q)?;
+            (&tag[c + 1..c + 1 + len], &head[start + c + 1..start + c + 1 + len])
+        } else {
+            let len = tag[c..].find(char::is_whitespace).unwrap_or(tag.len() - c);
+            (&tag[c..c + len], &head[start + c..start + c + len])
+        };
+        let (secs, rest) = body.split_once([';', ',']).unwrap_or((body, ""));
+        if secs.trim().parse::<f32>().map_or(true, |s| s > 3.0) {
+            continue;
+        }
+        let at = rest.find("url")?;
+        let url = raw[raw.len() - rest.len() + at + 3..].trim_start().trim_start_matches('=').trim().trim_matches(['\'', '"']);
+        return (!url.is_empty()).then(|| url.to_string());
+    }
+    None
 }
 
 /// Builds a document from markup already in hand (the start page, tests).
@@ -334,6 +380,20 @@ mod tests {
         assert_eq!(fetch_bytes("data:,a%20b", "*/*", "").unwrap(), b"a b");
         let u = Url::parse("https://cdn.example.com/css/site.css").unwrap();
         assert_eq!(absolutize("a{background:url(../img/x.png)} b{background:url('data:x')}", &u), "a{background:url(\"https://cdn.example.com/img/x.png\")} b{background:url('data:x')}");
+    }
+
+    #[test]
+    fn pages_that_only_send_you_on() {
+        let rust = "<script>window.location.replace(x)</script><noscript>
+<meta http-equiv=\"refresh\" content=\"0; url=https://blog.rust-lang.org/2024/11/28/Rust-1.83.0/\">
+</noscript>";
+        assert_eq!(refresh(rust).as_deref(), Some("https://blog.rust-lang.org/2024/11/28/Rust-1.83.0/"));
+        assert_eq!(refresh("<META HTTP-EQUIV=Refresh CONTENT='1;URL=/New/Place'>").as_deref(), Some("/New/Place"));
+        assert_eq!(refresh("<meta http-equiv=refresh content=0;url=next.html>").as_deref(), Some("next.html"));
+        // a page that reloads itself every minute, or has no address in it, stays
+        assert_eq!(refresh("<meta http-equiv=refresh content=\"60; url=/same\">"), None);
+        assert_eq!(refresh("<meta http-equiv=refresh content=5>"), None);
+        assert_eq!(refresh("<meta name=description content=\"refresh; url=x\">"), None);
     }
 
     #[test]
