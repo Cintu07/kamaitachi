@@ -36,6 +36,10 @@ pub struct Prefs {
     /// faint veins in the marble of the column
     pub veins: bool,
     pub contrast: bool,
+    /// the column stays out of the way until the mouse reaches its edge of the window
+    pub autohide: bool,
+    /// pages with no dark look of their own are darkened in Night
+    pub darken: bool,
     /// the column and the frame are glass: what is behind the window shows through, blurred
     pub glass: bool,
     /// how much of the marble's colour lies on the glass, in percent
@@ -87,6 +91,8 @@ impl Default for Prefs {
             meander: true,
             veins: true,
             contrast: false,
+            autohide: false,
+            darken: true,
             glass: true,
             tint: 60,
             read_fill: true,
@@ -198,6 +204,8 @@ impl Prefs {
             "meander" => self.meander,
             "veins" => self.veins,
             "contrast" => self.contrast,
+            "autohide" => self.autohide,
+            "darken" => self.darken,
             "glass" => self.glass,
             "read_fill" => self.read_fill,
             "dim_sleeping" => self.dim_sleeping,
@@ -270,6 +278,8 @@ impl Prefs {
                     "meander" => &mut self.meander,
                     "veins" => &mut self.veins,
                     "contrast" => &mut self.contrast,
+                    "autohide" => &mut self.autohide,
+                    "darken" => &mut self.darken,
                     "glass" => &mut self.glass,
                     "read_fill" => &mut self.read_fill,
                     "dim_sleeping" => &mut self.dim_sleeping,

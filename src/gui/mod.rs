@@ -7,6 +7,7 @@ pub mod brush;
 mod drive;
 mod fields;
 mod find;
+mod menu;
 mod pick;
 mod places;
 mod prefs;
@@ -136,6 +137,10 @@ struct Tab {
     muted: bool,
     /// showing the reading view of `url`
     reading: bool,
+    /// kept at the front of the row and drawn as a square at the top of the column
+    pinned: bool,
+    /// a card over another tab, opened with Shift+click; not in the column
+    peek: bool,
 }
 
 impl Tab {
@@ -169,6 +174,8 @@ impl Tab {
             asleep: false,
             muted: false,
             reading: false,
+            pinned: false,
+            peek: false,
         }
     }
 }
@@ -194,6 +201,8 @@ enum Hit {
     Star,
     /// one of the browser's own pages, from the foot of the column
     Page(&'static str),
+    PeekClose,
+    PeekKeep,
 }
 
 struct App {
@@ -222,6 +231,12 @@ struct App {
     closed: Vec<tabs::Closed>,
     picking: Option<pick::Pick>,
     find: Option<find::Find>,
+    /// a right-click menu
+    tab_menu: Option<menu::Menu>,
+    /// the tab a peek is over
+    peek_under: Option<u64>,
+    /// the column is out over the page, brought by the mouse at the edge
+    col_peek: bool,
     /// the mouse is over a box to type in, or something to press
     over: Option<bool>,
     /// the first half of a character that arrives as two messages, an emoji say
@@ -372,6 +387,9 @@ pub fn run(urls: Vec<String>) -> Result<(), String> {
             closed: Vec::new(),
             picking: None,
             find: None,
+            tab_menu: None,
+            peek_under: None,
+            col_peek: false,
             over: None,
             half: 0,
             last_click: (Instant::now(), -100.0, -100.0),
@@ -567,6 +585,12 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             WM_LBUTTONDOWN => {
                 app.click(lo(lp), hi(lp), Mods { ctrl: key_down(VK_CONTROL), shift: key_down(VK_SHIFT), alt: false });
                 LRESULT(0)
+            }
+            WM_RBUTTONDOWN => {
+                if app.context(lo(lp), hi(lp)) {
+                    return LRESULT(0);
+                }
+                DefWindowProcW(hwnd, msg, wp, lp)
             }
             WM_LBUTTONUP => {
                 app.drop_field();
@@ -1100,7 +1124,7 @@ impl App {
         }
         let gone = p.close_after as u64 * 3600;
         if gone > 0 {
-            let old: Vec<u64> = self.tabs.iter().enumerate().filter(|(i, t)| *i != cur && t.used.elapsed().as_secs() > gone).map(|(_, t)| t.id).collect();
+            let old: Vec<u64> = self.tabs.iter().enumerate().filter(|(i, t)| *i != cur && !t.pinned && !t.peek && t.used.elapsed().as_secs() > gone).map(|(_, t)| t.id).collect();
             for id in old {
                 if let Some(i) = self.tabs.iter().position(|t| t.id == id) {
                     self.close_tab(i);
@@ -1688,9 +1712,19 @@ impl App {
     }
 
     fn paste(&mut self) {
-        let s = unsafe {
+        let s = self.clipboard_text();
+        if self.addr_focused {
+            self.edit.insert(s.trim());
+        } else if !self.find_paste(&s) {
+            self.type_text(&s);
+        }
+    }
+
+    /// The text on the clipboard, or nothing.
+    fn clipboard_text(&self) -> String {
+        unsafe {
             if OpenClipboard(Some(self.hwnd)).is_err() {
-                return;
+                return String::new();
             }
             let mut out = String::new();
             if let Ok(h) = GetClipboardData(13) {
@@ -1706,11 +1740,6 @@ impl App {
             }
             let _ = CloseClipboard();
             out
-        };
-        if self.addr_focused {
-            self.edit.insert(s.trim());
-        } else if !self.find_paste(&s) {
-            self.type_text(&s);
         }
     }
 
@@ -1760,6 +1789,9 @@ impl App {
     /// Returns true when the key was used.
     fn key(&mut self, vk: VIRTUAL_KEY, m: Mods) -> bool {
         let Mods { ctrl, shift, alt } = m;
+        if vk == VK_ESCAPE && (self.menu_escape() || (self.find.is_none() && !self.addr_focused && self.close_peek())) {
+            return true;
+        }
         if self.pick_key(vk) || (self.addr_focused && self.address_key(vk)) || (!self.addr_focused && self.find_key(vk, m)) {
             return true;
         }
@@ -1790,6 +1822,26 @@ impl App {
                 VK_R if shift => self.toggle_reading(),
                 VK_K if !shift => self.focus_addr(),
                 VK_F if !shift => self.open_find(),
+                VK_C if shift => {
+                    let u = self.tab().url.clone();
+                    self.copy(&u);
+                    self.say("address copied");
+                }
+                VK_V if shift => {
+                    let text = self.clipboard_text();
+                    if !text.trim().is_empty() {
+                        self.navigate(text.trim(), false);
+                    }
+                }
+                VK_Z if !shift && self.editing().is_none() => self.reopen_closed(),
+                VK_PRIOR | VK_NEXT => {
+                    let n = self.tabs.iter().filter(|t| !t.peek).count();
+                    if n > 0 {
+                        self.cur = if vk == VK_PRIOR { (self.cur + n - 1) % n } else { (self.cur + 1) % n };
+                        self.update_title();
+                        self.update_views();
+                    }
+                }
                 VK_D if !shift => self.bookmark(),
                 VK_H if !shift => {
                     let c = self.cur;
@@ -1896,7 +1948,10 @@ impl App {
 
     fn mouse_move(&mut self, x: f32, y: f32) {
         self.mouse = (x, y);
-        if (self.in_page(x, y) && self.pick_hover(x, y)) || self.hover_menu(x, y) || self.drag_field(x, y) {
+        if self.edge_reveal(x) {
+            self.render();
+        }
+        if self.menu_hover(x, y) || (self.in_page(x, y) && self.pick_hover(x, y)) || self.hover_menu(x, y) || self.drag_field(x, y) {
             return self.render();
         }
         self.over = self.control_at(x, y).map(|(_, c, _)| c.typed());
@@ -1918,7 +1973,12 @@ impl App {
         self.mouse_move(x, y);
         let (t, lx, ly) = self.last_click;
         let double = t.elapsed().as_millis() < unsafe { GetDoubleClickTime() } as u128 && (x - lx).abs() + (y - ly).abs() < 8.0;
-        if self.in_page(x, y) && self.pick_click() {
+        if self.menu_click(x, y) || (self.in_page(x, y) && self.pick_click()) {
+            return self.render();
+        }
+        // a click beside a peek puts it away
+        if self.peeking() && !self.in_page(x, y) && self.hit(x, y) == Hit::None {
+            self.close_peek();
             return self.render();
         }
         self.picking = None;
@@ -1950,6 +2010,10 @@ impl App {
             }
             Hit::Suggest(i) => self.take_suggestion(i),
             Hit::Star => self.bookmark(),
+            Hit::PeekClose => {
+                self.close_peek();
+            }
+            Hit::PeekKeep => self.keep_peek(),
             Hit::Page(name) => {
                 if self.tab().url != START {
                     self.new_tab(START);
@@ -1986,6 +2050,8 @@ impl App {
                         self.press(&l);
                     } else if host_of(&l) == "kamaitachi.local" && !self.tab().own {
                         // only pages made here may change settings
+                    } else if m.shift && !self.peeking() {
+                        self.peek(&l);
                     } else if m.ctrl {
                         self.open_background(&l);
                     } else {
@@ -2060,20 +2126,26 @@ impl App {
             t.scroll = if d.abs() < 0.5 || !smooth { t.target } else { t.scroll + d * 0.28 };
         }
         let card = if self.tab().url == START || self.tab().full_mode { sk().field } else { self.tab().dl.as_ref().map_or(sk().field, |d| d.bg) };
+        let card = if !sk().light && prefs::get().darken && luma(card) > 150 && self.tab().url != START && !self.tab().full_mode { night(card) } else { card };
         self.hits.clear();
         let t0 = Instant::now();
         self.gpu.begin(sk().frame);
+        if self.peeking() {
+            self.draw_peek_under();
+        }
         self.draw_card(card);
         self.draw_page();
         self.draw_pick();
         self.draw_find();
         let t1 = t0.elapsed();
         self.draw_card_edges();
+        self.draw_peek_bar();
         self.draw_loading();
         self.draw_column();
         self.draw_notes();
         self.draw_address();
         self.draw_menu();
+        self.draw_tab_menu();
         if std::env::var_os("HAYATE_FRAMES").is_some() {
             eprintln!("frame {:.2} ms (page {:.2})", t0.elapsed().as_secs_f64() * 1000.0, t1.as_secs_f64() * 1000.0);
         }
@@ -2153,6 +2225,10 @@ impl App {
             let r = dl.clips[ci as usize];
             [(ox + r.x * k).max(view[0]), (r.y * k + oy).max(view[1]), (ox + (r.x + r.w) * k).min(view[2]), ((r.y + r.h) * k + oy).min(view[3])]
         };
+        // in Night, a page that is only light is turned dark: each colour's lightness is
+        // turned over and its hue kept, so white is near black and blue links stay blue
+        let dark = !sk().light && prefs::get().darken && luma(dl.bg) > 150;
+        let tone = |c: Rgba| if dark { night(c) } else { c };
         let gpu = &mut self.gpu;
         let mut skip_text = false;
         for it in &dl.items {
@@ -2185,13 +2261,13 @@ impl App {
                     if r.y + r.h < y0 || r.y > y1 {
                         continue;
                     }
-                    gpu.rect(ox + r.x * k, r.y * k + oy, r.w * k, r.h * k, color, radius * k, clipf(clip));
+                    gpu.rect(ox + r.x * k, r.y * k + oy, r.w * k, r.h * k, tone(color), radius * k, clipf(clip));
                 }
                 Item::Ring { r, width, color, radius, clip } => {
                     if r.y + r.h < y0 || r.y > y1 {
                         continue;
                     }
-                    gpu.ring(ox + r.x * k, r.y * k + oy, r.w * k, r.h * k, width * k, color, radius * k, clipf(clip));
+                    gpu.ring(ox + r.x * k, r.y * k + oy, r.w * k, r.h * k, width * k, tone(color), radius * k, clipf(clip));
                 }
                 Item::Text { start, len, color, clip } => {
                     if len == 0 {
@@ -2201,7 +2277,7 @@ impl App {
                     if gs[gs.len() - 1].y < y0 || gs[0].y > y1 + 40.0 {
                         continue;
                     }
-                    let cc = gpu::rgba(color, 1.0);
+                    let cc = gpu::rgba(tone(color), 1.0);
                     let cl = clipf(clip);
                     for g in gs {
                         gpu.glyph(g.face, g.size * k, g.id, ox + g.x * k, g.y * k + oy, cc, cl);
@@ -2212,7 +2288,7 @@ impl App {
                         continue;
                     }
                     if let Some(tex) = t.tex.get(&img) {
-                        gpu.draw_image(tex, ox + r.x * k, r.y * k + oy, r.w * k, r.h * k, alpha as f32 / 255.0, radius * k, clipf(clip));
+                        gpu.draw_image(tex, ox + r.x * k, r.y * k + oy, r.w * k, r.h * k, alpha as f32 / 255.0 * if dark { 0.85 } else { 1.0 }, radius * k, clipf(clip));
                     } else if t.loading {
                         gpu.rect(ox + r.x * k, r.y * k + oy, r.w * k, r.h * k, [128, 128, 128, 24], radius * k, clipf(clip));
                     }
@@ -2278,6 +2354,22 @@ impl App {
         self.wall = Some((cw, ch, img.clone()));
         Some(img)
     }
+}
+
+/// How light a colour looks, 0 to 255.
+fn luma(c: Rgba) -> u32 {
+    (c[0] as u32 * 299 + c[1] as u32 * 587 + c[2] as u32 * 114) / 1000
+}
+
+/// A colour with its lightness turned over and its hue kept: each channel moves by the
+/// same amount, so the brightest and darkest channels trade places around the middle.
+fn night(c: Rgba) -> Rgba {
+    let (hi, lo) = (c[0].max(c[1]).max(c[2]) as i32, c[0].min(c[1]).min(c[2]) as i32);
+    let shift = 255 - hi - lo;
+    let f = |v: u8| (v as i32 + shift).clamp(0, 255) as u8;
+    // pure black would be too hard against the night frame
+    let lift = |v: u8| v.max(0x16);
+    [lift(f(c[0])), lift(f(c[1])), lift(f(c[2])), c[3]]
 }
 
 fn img_size(i: &paint::Image) -> (u32, u32) {

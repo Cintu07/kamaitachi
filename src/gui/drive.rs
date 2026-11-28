@@ -41,6 +41,17 @@ impl App {
                     self.mouse_move(ox + x * k, oy + y * k);
                 }
             }
+            "shift-click" | "right" => {
+                let (k, (ox, oy)) = (self.k(), self.page_origin());
+                if let Some((x, y)) = rest.split_once(' ').and_then(|(x, y)| Some((x.parse::<f32>().ok()?, y.parse::<f32>().ok()?))) {
+                    let (x, y) = (ox + x * k, oy + y * k);
+                    if verb == "right" {
+                        self.context(x, y);
+                    } else {
+                        self.click(x, y, Mods { shift: true, ..Default::default() });
+                    }
+                }
+            }
             "type" => rest.chars().for_each(|c| self.type_char(c)),
             "key" => {
                 let (ctrl, name) = rest.strip_prefix("ctrl+").map_or((false, rest), |n| (true, n));

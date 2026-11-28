@@ -38,10 +38,10 @@ impl App {
         }
         places::save();
         let mut out = format!("cur\t{}\n", self.cur);
-        for t in &self.tabs {
-            // a tab still asleep keeps the place it had
+        for t in self.tabs.iter().filter(|t| !t.peek) {
+            // a tab still asleep keeps the place it had; a pinned one says so with a p
             let at = t.restore.filter(|_| t.asleep).unwrap_or(t.scroll);
-            out.push_str(&format!("{:.0}\t{}\n", at, if t.url.is_empty() { START } else { &t.url }));
+            out.push_str(&format!("{}{:.0}\t{}\n", if t.pinned { "p" } else { "" }, at, if t.url.is_empty() { START } else { &t.url }));
         }
         let _ = std::fs::write(session_file(), out);
     }
@@ -61,7 +61,8 @@ impl App {
             let mut t = Tab::new(id);
             t.url = b.to_string();
             t.title = if b == START { "New tab".into() } else { host_of(b).trim_start_matches("www.").to_string() };
-            t.restore = Some(a.parse().unwrap_or(0.0));
+            t.pinned = a.starts_with('p');
+            t.restore = Some(a.trim_start_matches('p').parse().unwrap_or(0.0));
             t.asleep = true;
             self.tabs.push(t);
         }
@@ -116,6 +117,7 @@ impl App {
             .tabs
             .iter()
             .enumerate()
+            .filter(|(_, t)| !t.peek)
             .filter_map(|(i, t)| {
                 let hay = format!("{} {}", t.title, t.url.trim_start_matches("https://")).to_lowercase();
                 let score = match hay.find(&q) {

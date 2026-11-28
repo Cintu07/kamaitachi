@@ -30,14 +30,38 @@ pub(super) enum Suggest {
 impl App {
     // ---- where things are ----
 
+    /// How much room the column takes from the page: none when it is put away, or when
+    /// it only slides out at the edge.
     pub(super) fn column_w(&self) -> f32 {
-        if self.column_hidden { 0.0 } else { prefs::get().column }
+        if self.column_hidden || prefs::get().autohide { 0.0 } else { prefs::get().column }
+    }
+
+    /// Whether the column is drawn: always, unless it hides at the edge and the mouse
+    /// has not brought it out.
+    pub(super) fn column_out(&self) -> bool {
+        !self.column_hidden && (!prefs::get().autohide || self.col_peek)
+    }
+
+    /// The column slides out when the mouse reaches its edge of the window, and goes
+    /// away when the mouse leaves it. Returns whether that changed.
+    pub(super) fn edge_reveal(&mut self, x: f32) -> bool {
+        let p = prefs::get();
+        if !p.autohide || self.column_hidden {
+            return false;
+        }
+        let (cx, w) = (x / self.scale, self.w as f32 / self.scale);
+        let edge = if p.side == Side::Left { cx < 6.0 } else { cx > w - 6.0 };
+        let inside = self.column_box().contains(cx, 10.0);
+        let out = if self.col_peek { inside } else { edge };
+        let changed = out != self.col_peek;
+        self.col_peek = out;
+        changed
     }
 
     /// The tab column, in window css px.
     pub(super) fn column_box(&self) -> Rect {
         let (w, h) = (self.w as f32 / self.scale, self.h as f32 / self.scale);
-        let cw = self.column_w();
+        let cw = if self.column_hidden { 0.0 } else { prefs::get().column };
         match prefs::get().side {
             Side::Left => Rect::new(0.0, 0.0, cw, h),
             Side::Right => Rect::new(w - cw, 0.0, cw, h),
@@ -52,7 +76,13 @@ impl App {
         let cw = self.column_w();
         let x = if p.side == Side::Left && cw > 0.0 { cw } else { g };
         let right = if p.side == Side::Right && cw > 0.0 { w - cw } else { w - g };
-        Rect::new(x, g, (right - x).max(1.0), (h - 2.0 * g).max(1.0))
+        let b = Rect::new(x, g, (right - x).max(1.0), (h - 2.0 * g).max(1.0));
+        if self.tabs.get(self.cur).is_some_and(|t| t.peek) {
+            // a peek is a card inside the page's card, with room above it for its buttons
+            let (mx, top) = ((b.w * 0.06).max(24.0), 52.0);
+            return Rect::new(b.x + mx, b.y + top, (b.w - 2.0 * mx).max(1.0), (b.h - top - 24.0).max(1.0));
+        }
+        b
     }
 
     /// The page's top-left corner in device px.
@@ -142,12 +172,22 @@ impl App {
     }
 
     pub(super) fn draw_column(&mut self) {
-        if self.column_hidden {
+        if !self.column_out() {
             return;
         }
         let (p, s, col, k) = (prefs::get(), sk(), self.column_box(), self.scale);
         let (x0, w, h) = (col.x, col.w, col.h);
         let hover = self.hover;
+        if p.autohide {
+            // out over the page: solid, with a shadow on its open side
+            let edge = if p.side == Side::Left { col.x + col.w } else { col.x - 8.0 };
+            for n in 0..8 {
+                let a = 22 - n as u8 * 3;
+                self.rect(Rect::new(edge + if p.side == Side::Left { n as f32 } else { 7.0 - n as f32 }, 0.0, 1.0, h), [0, 0, 0, a], 0.0);
+            }
+            let f = s.frame;
+            self.rect(col, [f[0], f[1], f[2], 255], 0.0);
+        }
         if p.veins && s.frame[3] == 255 {
             self.draw_veins(col);
         }
@@ -215,11 +255,34 @@ impl App {
         let top = y;
         let bottom = h - 46.0;
         let ctrl = self.ctrl_held && p.tab_numbers;
-        let n = self.tabs.len();
+        let pins: Vec<usize> = (0..self.tabs.len()).filter(|&i| self.tabs[i].pinned && self.shown(i)).collect();
+        let rows: Vec<usize> = (0..self.tabs.len()).filter(|&i| !self.tabs[i].pinned && self.shown(i)).collect();
+        // pinned tabs: squares in rows across the top, a letter each
+        let mut top = top;
+        if !pins.is_empty() {
+            let (size, gap) = (38.0, 6.0);
+            let per = ((w - 16.0 + gap) / (size + gap)).floor().max(1.0) as usize;
+            for (k, &i) in pins.iter().enumerate() {
+                let r = Rect::new(x0 + 8.0 + (k % per) as f32 * (size + gap), top + (k / per) as f32 * (size + gap), size, size);
+                let cur = i == self.cur;
+                self.rect(r, if cur { s.field } else if hover == Hit::Tab(i) { s.wash } else { s.hover }, 9.0);
+                if cur {
+                    self.gpu.ring(r.x * self.scale, r.y * self.scale, r.w * self.scale, r.h * self.scale, 1.0, s.hairline, 9.0 * self.scale, gpu::NO_CLIP);
+                }
+                let t = &self.tabs[i];
+                let full = t.full.is_some();
+                let (mark, c) = if ctrl && i < 9 { ((i + 1).to_string(), s.accent) } else { (Self::letter(t), if full { s.accent } else if cur { s.text } else { s.muted }) };
+                let mw = self.ui_text(&mark, 14.0, 600, UI_FONT, c).1;
+                self.label(&mark, r.x + (size - mw) / 2.0, r.y + 9.5, 14.0, 600, c, size, UI_FONT);
+                self.hits.push((r, Hit::Tab(i)));
+            }
+            top += ((pins.len() + per - 1) / per) as f32 * (size + gap) + 6.0;
+        }
+        let n = rows.len();
         let fits = ((bottom - top) / rh).floor().max(1.0) as usize;
         self.col_scroll = self.col_scroll.min(n.saturating_sub(fits.saturating_sub(1)));
-        for i in self.col_scroll..n {
-            let ry = top + (i - self.col_scroll) as f32 * rh;
+        for (row, &i) in rows.iter().enumerate().skip(self.col_scroll) {
+            let ry = top + (row - self.col_scroll) as f32 * rh;
             if ry + rh > bottom {
                 break;
             }
@@ -305,6 +368,9 @@ impl App {
     }
 
     fn can_go(&self) -> (bool, bool) {
+        if self.tabs.is_empty() {
+            return (false, false);
+        }
         let t = self.tab();
         match &t.full {
             Some(f) if t.full_mode => full::can(&f.wv),
@@ -469,7 +535,10 @@ impl App {
             self.hits.push((rr, Hit::Suggest(i)));
             let (glyph, text, side) = match sug {
                 Suggest::Go(q) if crate::url::looks_like_address(q) => ('\u{E774}', q.clone(), "Go".to_string()),
-                Suggest::Go(q) => ('\u{E721}', q.clone(), format!("Search {engine}")),
+                Suggest::Go(q) => match crate::url::shortcut(q) {
+                    Some((site, _)) => ('\u{E721}', q.split_once(' ').map_or(q.clone(), |x| x.1.to_string()), format!("Search {site}")),
+                    None => ('\u{E721}', q.clone(), format!("Search {engine}")),
+                },
                 Suggest::Tab(t) => ('\u{E8A5}', self.tabs[*t].title.clone(), "Switch to tab".to_string()),
                 Suggest::Place(u, t, m) => (if *m { '\u{E735}' } else { '\u{E81C}' }, if t.is_empty() { u.trim_start_matches("https://").to_string() } else { t.clone() }, u.trim_start_matches("https://").split('/').next().unwrap_or("").trim_start_matches("www.").to_string()),
             };
