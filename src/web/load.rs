@@ -24,6 +24,13 @@ pub struct Fetched {
     pub body: Vec<u8>,
 }
 
+static GPC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Sends Global Privacy Control, which asks sites not to sell or share what they learn.
+pub fn set_gpc(on: bool) {
+    GPC.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// A page to open: typed, linked to, or the answer to a form.
 #[derive(Clone)]
 pub struct Request {
@@ -62,6 +69,9 @@ fn exchange(url: &Url, accept: &str, from: &str, page: bool, body: Option<&(Stri
         let mut headers: Vec<(&str, &[u8])> = vec![("Accept", accept.as_bytes()), ("Accept-Language", b"en-US,en;q=0.8"), ("User-Agent", UA.as_bytes())];
         if let Some(c) = &cookie {
             headers.push(("Cookie", c.as_bytes()));
+        }
+        if GPC.load(std::sync::atomic::Ordering::Relaxed) {
+            headers.push(("Sec-GPC", b"1"));
         }
         if let Some((ty, _)) = body {
             headers.push(("Content-Type", ty.as_bytes()));

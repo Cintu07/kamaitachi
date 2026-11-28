@@ -143,11 +143,53 @@ pub fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// A web search for the text, always (even when it looks like an address).
-pub fn search(q: &str) -> Url {
+/// The search engine's address, with %s where the words go.
+static SEARCH: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
+
+/// Sends searches somewhere else than DuckDuckGo Lite.
+pub fn set_search(template: &str) {
+    if let Ok(mut s) = SEARCH.write() {
+        *s = template.to_string();
+    }
+}
+
+/// Text made safe for a query string.
+pub fn encode(q: &str) -> String {
     let mut e = Vec::new();
     crate::net::http::push_query(&mut e, q.trim());
-    Url { host: "lite.duckduckgo.com".into(), path: format!("/lite/?q={}", String::from_utf8_lossy(&e)) }
+    String::from_utf8_lossy(&e).into_owned()
+}
+
+/// A web search for the text, always (even when it looks like an address).
+pub fn search(q: &str) -> Url {
+    let template = SEARCH.read().map(|s| s.clone()).unwrap_or_default();
+    let template = if template.contains("%s") { template } else { "https://lite.duckduckgo.com/lite/?q=%s".to_string() };
+    Url::parse(&template.replace("%s", &encode(q))).unwrap_or_else(|| Url { host: "lite.duckduckgo.com".into(), path: format!("/lite/?q={}", encode(q)) })
+}
+
+/// Whether typed text is an address rather than words to search for.
+pub fn looks_like_address(s: &str) -> bool {
+    let s = s.trim();
+    !s.contains(' ') && s.contains('.') && Url::parse(s).is_some()
+}
+
+/// Codes that only say where you clicked from. Taking them out changes nothing on the page.
+const TRACKERS: &[&str] = &["gclid", "gclsrc", "dclid", "gbraid", "wbraid", "fbclid", "msclkid", "mc_eid", "mc_cid", "igshid", "yclid", "twclid", "ttclid", "_hsenc", "_hsmi", "mkt_tok", "oly_enc_id", "oly_anon_id", "vero_id", "srsltid"];
+
+impl Url {
+    /// The same address with click trackers taken out of its query.
+    pub fn without_trackers(&self) -> Url {
+        let Some((path, query)) = self.path.split_once('?') else { return self.clone() };
+        let kept: Vec<&str> = query
+            .split('&')
+            .filter(|kv| {
+                let k = kv.split('=').next().unwrap_or("").to_ascii_lowercase();
+                !(k.starts_with("utm_") || TRACKERS.contains(&k.as_str()))
+            })
+            .collect();
+        let path = if kept.is_empty() { path.to_string() } else { format!("{path}?{}", kept.join("&")) };
+        Url { host: self.host.clone(), path }
+    }
 }
 
 /// What the address bar does with input: an address, or a web search.
@@ -164,6 +206,14 @@ pub fn from_input(s: &str) -> Url {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn click_trackers_come_out() {
+        let u = Url::parse("https://shop.com/p?id=7&utm_source=x&UTM_medium=y&fbclid=abc&color=red").unwrap();
+        assert_eq!(u.without_trackers().full(), "https://shop.com/p?id=7&color=red");
+        assert_eq!(Url::parse("https://a.com/?gclid=1").unwrap().without_trackers().full(), "https://a.com/");
+        assert_eq!(Url::parse("https://a.com/x").unwrap().without_trackers().full(), "https://a.com/x");
+    }
 
     #[test]
     fn parses_what_people_type() {

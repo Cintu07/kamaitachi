@@ -50,9 +50,16 @@ fn off() -> bool {
     std::env::var("HAYATE_NOBLOCK").is_ok()
 }
 
+static ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Turns blocking on or off for every page from now on. The lists stay loaded.
+pub fn set_on(on: bool) {
+    ON.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// The blocker every tab shares, unless blocking is switched off.
 pub fn get() -> Option<Arc<Blocker>> {
-    if off() {
+    if off() || !ON.load(std::sync::atomic::Ordering::Relaxed) {
         return None;
     }
     global().read().ok()?.clone()
