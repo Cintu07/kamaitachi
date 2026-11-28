@@ -91,7 +91,7 @@ Drag an image onto the window and it becomes the new tab's wallpaper.
 
 ## the look, and changing it
 
-The window is white marble with Aegean blue. The tabs are a column down the left and the page is a card beside it, with nothing above it. The address sits at the top of the column, and `Ctrl+L` brings it up over the page as a field that also finds open tabs. A tab fills with grey as you read down its page, and a tab that has let its page go is dimmed. Along the foot of the column runs a band of Greek key in gold. It is drawn as one-pixel lines, and the marble veins are two pencil strokes, so neither is kept in memory as a picture. Night puts the same layout on dark slate, with the accent made lighter so it still reads.
+The window is white marble with Aegean blue. The tabs are a column down the left and the page is a card beside it, with nothing above it. The address sits at the top of the column, and `Ctrl+L` brings it up over the page as a field that also finds open tabs. A tab fills with grey as you read down its page, and a tab that has let its page go is dimmed. Along the foot of the column runs a band of Greek key in gold. It is drawn as one-pixel lines, and the marble veins are two pencil strokes, so neither is kept in memory as a picture. Night puts the same layout on dark slate, with the accent made lighter so it still reads. With glass on, Windows blurs whatever is behind the window and the marble becomes a tint over it. The interface is set in Instrument Sans, and the name and headings in Cinzel.
 
 Settings is a page of its own, at `kamaitachi.local/settings`, with a box that finds a setting by its words. There you can pick light, dark or whatever Windows uses, one of six accent colours, the tabs on the left or the right, how wide the column is, roomier tabs, the card or edge to edge, the search engine and the page zoom. Tabs can sleep after 10, 30 or 60 minutes and close after a day or a week. Click trackers can be taken out of links, and Global Privacy Control sent with every page. Every choice is written to `%APPDATA%\hayate\settings.txt` as one `name = value` line, which can also be edited by hand.
 
@@ -110,4 +110,4 @@ This repo started as hayate, a terminal client for X and YouTube that also talks
 
 ## license
 
-MIT. The fonts in `assets/fonts` are Computer Modern Unicode under the SIL Open Font License, which is in the same folder. Filter lists and wallpapers are downloaded when the browser runs, so neither is part of this repo.
+MIT. The fonts in `assets/fonts` are Computer Modern Unicode, Instrument Sans and Cinzel, all under the SIL Open Font License; each licence is in the same folder. Filter lists and wallpapers are downloaded when the browser runs, so neither is part of this repo.
